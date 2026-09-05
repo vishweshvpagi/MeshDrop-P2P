@@ -1,0 +1,221 @@
+# MeshDrop File Transfer Specification
+
+## 1. Overview
+MeshDrop Phase 11 implements a robust, memory-efficient peer-to-peer file transfer subsystem directly on top of the custom framed binary protocol and Java 26 virtual threads.
+
+Key Design Principles:
+- **Zero Third-Party Dependencies**: Exclusively utilizes the Java 26 Standard Library (`java.nio.file`, `java.security.MessageDigest`, `java.util.concurrent`).
+- **Memory Safety**: Files are strictly streamed in bounded chunks ($O(\text{chunk size})$ memory usage). Files are never read into memory all at once.
+- **End-to-End Cryptographic Integrity**: The sender calculates SHA-256 upfront; the receiver computes SHA-256 incrementally on disk and verifies before publication.
+- **Filesystem Security**: Defense against path traversal attacks, directory isolation, non-destructive collision renaming, and staging via temporary `.part` files.
+- **Asynchronous Event-Driven Coordination**: Dedicated virtual threads handle chunk streaming without blocking protocol event loops or socket threads.
+
+---
+
+## 2. Architecture & Components
+
+```text
+               CommandLineInterface (sendfile / transfers / [y/N])
+                                  │
+                                  ▼
+                         FileTransferService
+                                  │
+      ┌───────────────────────────┼───────────────────────────┐
+      ▼                           ▼                           ▼
+TransferManager              FileSender                  FileReceiver
+(Active Transfers)      (O(chunk) Streaming)         (.part Staging & Hashing)
+      │                           │                           │
+      │                     FileTransferCodec                 │
+      │                (Binary Encode / Decode)               │
+      └───────────────────────────┼───────────────────────────┘
+                                  ▼
+                                Packet (Type 0x10 - 0x18)
+                                  │
+                                  ▼
+                            TcpConnection (Virtual Threads)
+```
+
+### Components
+1. **`FileMetadata`**: Immutable transfer descriptor containing UUID transfer ID, sender ID, recipient ID, sanitized filename, file size, creation timestamp, and expected SHA-256 hash.
+2. **`FileChunk`**: Sliced byte payload container tracking chunk index, byte offset, data length, and raw bytes.
+3. **`FileSender`**: Reads chunks from disk sequentially, publishes `FILE_CHUNK` packets, tracks progress, and sends `FILE_COMPLETE`.
+4. **`FileReceiver`**: Stages incoming chunks into `.transfer-<id>.part`, incrementally computes SHA-256, verifies size and hash, and moves to final destination with collision numbering.
+5. **`Transfer`**: Domain state machine tracking progress percentage, throughput speed (B/s), transfer direction (`UPLOAD`/`DOWNLOAD`), and lifecycle state.
+6. **`TransferManager`**: Thread-safe registry tracking all in-flight and completed transfers.
+7. **`FileTransferService`**: Top-level coordinator routing packets, managing approvals, and enforcing timeouts.
+
+---
+
+## 3. Transfer State Machine
+
+```text
+UPLOAD:
+OFFERING ──► WAITING_FOR_ACCEPT ──► ACCEPTED ──► TRANSFERRING ──► VERIFYING ──► COMPLETED
+   │                  │                 │              │              │
+   └──────────────────┴─────────────────┴──────────────┴──────────────┴──► FAILED / CANCELLED / REJECTED
+
+DOWNLOAD:
+WAITING_FOR_ACCEPT ──► ACCEPTED ──► TRANSFERRING ──► VERIFYING ──► COMPLETED
+   │                       │              │              │
+   └───────────────────────┴──────────────┴──────────────┴──► FAILED / CANCELLED / REJECTED
+```
+
+- **`OFFERING`**: Sender created transfer manifest and transmitted `FILE_OFFER`.
+- **`WAITING_FOR_ACCEPT`**: Waiting for peer acceptance decision or user approval.
+- **`ACCEPTED`**: Transfer was accepted; sender streaming thread spawned.
+- **`TRANSFERRING`**: Actively transmitting or receiving file chunks.
+- **`VERIFYING`**: All chunks received; receiver calculating final SHA-256 digest.
+- **`COMPLETED`**: Final verification passed; file atomically promoted to downloads directory.
+- **`REJECTED`**: Peer or local user declined the transfer offer.
+- **`FAILED`**: I/O error, socket disconnect, hash mismatch, or offset corruption.
+- **`CANCELLED`**: Cancelled by user or graceful node shutdown.
+
+---
+
+## 4. Binary Wire Protocol
+
+All file transfer packets use the standard MeshDrop 28-byte binary header with magic bytes `0x4D 0x44 0x52 0x50` ("MDRP").
+
+| Packet Type | Opcode | Payload Layout |
+|---|---|---|
+| `FILE_OFFER` | `0x10` | 16B TransferId + 16B SenderId + 16B RecipientId + 8B FileSize + 8B CreatedAt + 64B SHA256 + 2B NameLen + $N$ bytes FileName |
+| `FILE_CHUNK` | `0x11` | 16B TransferId + 4B ChunkIndex + 8B Offset + 4B Length + $N$ bytes ChunkData |
+| `FILE_COMPLETE` | `0x12` | 16B TransferId + 4B TotalChunks + 8B TotalBytes + 64B SHA256 |
+| `FILE_ACCEPT` | `0x15` | 16B TransferId |
+| `FILE_REJECT` | `0x16` | 16B TransferId + 2B ReasonLen + $M$ bytes Reason |
+| `FILE_ACK` (Terminal) | `0x17` | 16B TransferId + 1B Success (1/0) + 8B Timestamp (25 bytes) |
+| `FILE_CHUNK_ACK` (Extended) | `0x17` | 16B TransferId + 1B Success (1/0) + 8B Timestamp + 8B HighestContiguousChunk + 8B ReceiverOffset (41 bytes) |
+| `FILE_RESUME_REQUEST` | `0x13` | 16B TransferId + 4B RequestedChunk + 8B RequestedOffset + 64B SHA256 + 2B NameLen + $N$ bytes FileName (124+N bytes) |
+| `FILE_RESUME_RESPONSE` | `0x14` | 16B TransferId + 1B Accepted + 4B ResumeChunk + 8B ResumeOffset + 2B ReasonLen + $M$ bytes Reason (39+M bytes) |
+| `FILE_ERROR` | `0x18` | 16B TransferId + 2B MsgLen + $E$ bytes ErrorMessage |
+
+---
+
+## 5. Security & Safety Mechanisms
+
+### Path Traversal Defense
+The receiver never allows the sender to specify arbitrary directories or relative paths:
+- Basenames only: `Path.of(rawName).getFileName().toString()`.
+- Explicit character filtering: drops `/`, `\`, `..`, and `:` (Windows drive letters).
+- Length limits: filenames are capped at 255 bytes.
+
+### Temporary File Staging
+- Files are staged in `temp/.transfer-<UUID>.part`.
+- The temporary file is only moved to the final downloads directory once all chunks are assembled and SHA-256 matches.
+- On abort or verification mismatch, the temporary `.part` file is deleted immediately.
+
+### Collision Renaming Strategy
+- If `document.pdf` already exists in `downloads/`, the receiver automatically checks `document (1).pdf`, `document (2).pdf`, etc.
+- Existing files are never overwritten or truncated.
+
+---
+
+## 6. CLI Usage
+
+### Send File
+```text
+meshdrop> sendfile Alice "C:\Data\presentation.pdf"
+
+Preparing file...
+Size: 14.2 MB
+SHA-256: 4f8a...
+
+Waiting for Alice to accept...
+
+Transfer accepted.
+Progress: 100%
+SHA-256 verified.
+Transfer completed.
+ID: 60866179-3181-48f3-b197-130d8e8d79cf
+```
+
+### Incoming Transfer Approval
+```text
+Incoming file transfer:
+From: Alice
+File: presentation.pdf
+Size: 14.2 MB
+Accept? [y/N]
+meshdrop> y
+File transfer accepted.
+```
+
+### List Transfers
+```text
+meshdrop> transfers
+
+File Transfers
+--------------
+
+1. UPLOAD (COMPLETED)
+   ID:       60866179-3181-48f3-b197-130d8e8d79cf
+   File:     presentation.pdf
+   Progress: 100.0% (14.2 MB / 14.2 MB)
+   Speed:    18.4 MB/s
+```
+
+### Inspect Transfer Debug State
+```text
+meshdrop> transfer-debug 60866179-3181-48f3-b197-130d8e8d79cf
+
+Transfer Debug State: 60866179-3181-48f3-b197-130d8e8d79cf
+------------------------------------------------------------
+State:         TRANSFERRING
+Direction:     UPLOAD
+File:          presentation.pdf (14.2 MB)
+Transferred:   8.4 MB (59.2%)
+Speed:         Instant: 42.1 MB/s | Average: 39.8 MB/s
+ETA:           00:01 (Elapsed: 00:01)
+Local Path:    C:\Data\presentation.pdf
+
+Active Sender Info:
+  Window Size:     8
+  Base Chunk:      131
+  Next Chunk:      139
+  In-Flight:       8
+  Highest Acked:   130 (offset: 8519680)
+  Retries:         0
+  Failed:          false
+```
+
+---
+
+## 7. Sliding-Window Flow Control & Reliable Streaming
+
+MeshDrop implements a sliding-window transport protocol on top of TCP framed packets to optimize throughput while enforcing strict bounded memory and backpressure:
+
+```text
+Sender                                                        Receiver
+  │                                                              │
+  │─── FILE_CHUNK (chunk 0, len 64KB) ──────────────────────────►│
+  │─── FILE_CHUNK (chunk 1, len 64KB) ──────────────────────────►│
+  │─── FILE_CHUNK (chunk 2, len 64KB) ──────────────────────────►│
+  │─── FILE_CHUNK (chunk 3, len 64KB) ──────────────────────────►│
+  │                                                              │
+  │◄── FILE_CHUNK_ACK (highestContiguous=0, off=65536) ──────────│ (Window slides)
+  │─── FILE_CHUNK (chunk 4, len 64KB) ──────────────────────────►│
+  │                                                              │
+  │    [Timeout / Unacked detection]                             │
+  │─── RETRANSMIT chunk N (attempt i / maxRetries) ─────────────►│
+```
+
+### Flow Control Rules
+1. **Window Size Bounds**: The sender dispatches up to `windowSize` (default: 8, max: 64) unacknowledged chunks before pausing and awaiting window progress.
+2. **Cumulative ACKs**: As receiver persists chunks, it transmits 41-byte `FILE_CHUNK_ACK` packets conveying `highestContiguousChunk` and `receiverOffset`. All chunks $\le \text{highestContiguousChunk}$ are acknowledged and retired.
+3. **ACK Timeout & Retransmission**: Oldest unacknowledged in-flight chunks are timed (`ackTimeoutMs = 5000ms`). If unacknowledged, sender retransmits the missing chunk with exponential backoff up to `maxRetries = 5`.
+4. **Idempotent Duplicate Chunks**: Retransmitted chunks that were already written to disk are safely ignored by the receiver without corrupting the cryptographic digest or file offsets. The receiver immediately echoes the current cumulative ACK.
+5. **Dynamic Transport Migration**: If dual simultaneous outbound connections arbitrate to a single connection in `PeerManager`, active transfer sessions automatically migrate their underlying TCP socket to the winning connection before the redundant socket is closed.
+6. **Source Mutation Detection**: Sender records `fileSize` and `lastModifiedTime` at start of transfer. Prior to streaming and before `FILE_COMPLETE`, sender verifies source attributes on disk. If mutation is detected, transfer safely aborts with an explicit error.
+
+---
+
+## 8. Memory Safety & Large File Guarantees (10 GB, 50 GB, 100 GB+)
+
+### Strict Memory Bound: $O(\text{chunkSize} \times \text{windowSize})$
+Memory consumption is strictly bounded and independent of logical file size:
+$$\text{Max In-Flight RAM} = \text{chunkSize} \times \text{windowSize} = 64\text{ KiB} \times 8 = 512\text{ KiB}$$
+
+Even when transferring 10 GB, 50 GB, or 100 GB+ datasets:
+- **No full-file buffering**: Prohibits `Files.readAllBytes()`, whole-file arrays, or large ByteBuffers.
+- **Incremental SHA-256**: Digest is updated in 256 KiB streaming buffers during pre-transfer hashing and receiver chunk processing.
+- **Seekable FileChannels**: Sender reads exact byte slices directly from filesystem blocks; receiver writes directly to designated offsets in `.part` files.

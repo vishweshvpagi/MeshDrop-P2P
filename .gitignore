@@ -1,0 +1,62 @@
+﻿# ==============================================================================
+# MeshDrop Root .gitignore
+# ==============================================================================
+
+# Node.js & Frontend dependencies and builds
+**/node_modules/
+**/dist/
+**/dist-ssr/
+*.tsbuildinfo
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Java compilation outputs
+out/
+bin/
+**/out/
+**/bin/
+*.class
+
+# Runtime transfer data and storage
+**/data/
+**/storage/downloads/*
+!**/storage/downloads/.gitkeep
+**/storage/temp/*
+!**/storage/temp/.gitkeep
+**/storage/transfers/*
+!**/storage/transfers/.gitkeep
+**/storage/*.dat
+*.part
+*.meta
+*.tmp
+
+# Logs
+logs/
+**/logs/
+*.log
+
+# Environment configuration
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Operating System files
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.stackdump
