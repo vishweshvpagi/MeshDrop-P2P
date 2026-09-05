@@ -57,8 +57,8 @@ public final class ProtocolConstants {
     /** Checkpoint interval in milliseconds for periodic on-disk flush (1s) */
     public static final long DEFAULT_CHECKPOINT_INTERVAL_MS = 1_000;
 
-    /** Default file transfer offer acceptance timeout in milliseconds */
-    public static final int DEFAULT_FILE_OFFER_TIMEOUT_MS = 30_000;
+    /** Default file transfer offer acceptance timeout in milliseconds (120s) */
+    public static final int DEFAULT_FILE_OFFER_TIMEOUT_MS = 120_000;
 
     /** Default file transfer streaming idle inactivity timeout in milliseconds (60s) */
     public static final int DEFAULT_FILE_TRANSFER_IDLE_TIMEOUT_MS = 60_000;

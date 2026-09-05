@@ -103,8 +103,35 @@ export class ApiClient {
   private timeoutMillis: number;
 
   constructor(config: ApiClientConfig = {}) {
-    // Read from Vite environment variable or default to local Java backend port 8080
-    this.baseUrl = config.baseUrl || (import.meta.env?.VITE_MESHDROP_API_URL as string) || 'http://localhost:8080';
+    let resolvedUrl = config.baseUrl;
+    if (!resolvedUrl && typeof window !== 'undefined') {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const apiParam = params.get('api') || params.get('apiUrl');
+        const apiPort = params.get('apiPort');
+        if (apiParam) {
+          resolvedUrl = apiParam;
+        } else if (apiPort) {
+          const host = window.location.hostname || 'localhost';
+          resolvedUrl = `http://${host}:${apiPort}`;
+        } else {
+          const stored = localStorage.getItem('meshdrop_api_url');
+          if (stored) {
+            resolvedUrl = stored;
+          } else if (window.location.port && window.location.port !== '80' && window.location.port !== '443') {
+            const portNum = parseInt(window.location.port, 10);
+            if (!isNaN(portNum) && portNum >= 3000 && portNum < 3100) {
+              const offset = portNum - 3000;
+              const host = window.location.hostname || 'localhost';
+              resolvedUrl = `http://${host}:${8080 + offset}`;
+            }
+          }
+        }
+      } catch {
+        // Fallback safely
+      }
+    }
+    this.baseUrl = resolvedUrl || (import.meta.env?.VITE_MESHDROP_API_URL as string) || 'http://localhost:8080';
     this.timeoutMillis = config.timeoutMillis || 4000;
   }
 
@@ -112,8 +139,23 @@ export class ApiClient {
     return this.baseUrl;
   }
 
+  public getPort(): number {
+    try {
+      const u = new URL(this.baseUrl);
+      return parseInt(u.port, 10) || 8080;
+    } catch {
+      return 8080;
+    }
+  }
+
   public setBaseUrl(url: string) {
     this.baseUrl = url.replace(/\/+$/, '');
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('meshdrop_api_url', this.baseUrl);
+        window.dispatchEvent(new CustomEvent('meshdrop-api-url-changed', { detail: this.baseUrl }));
+      } catch {}
+    }
   }
 
   /**

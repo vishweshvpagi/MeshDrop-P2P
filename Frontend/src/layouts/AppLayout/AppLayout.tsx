@@ -1,16 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { IncomingTransferModal } from '../../components/transfers/IncomingTransferModal';
+import { ToastContainer } from '../../components/Notification/ToastContainer';
 import { StatusIndicator, StatusType } from '../../components/StatusIndicator/StatusIndicator';
 import { ThemeToggle } from '../../components/ThemeToggle/ThemeToggle';
 import { useNodeStatus } from '../../hooks/useNodeStatus';
 import { useTransfers } from '../../hooks/useTransfers';
+import { apiClient } from '../../services/apiClient';
 import './AppLayout.css';
 
 export const AppLayout: React.FC = () => {
-  const { node, connectionStatus } = useNodeStatus(3000);
-  const { pendingIncomingTransfers, acceptTransfer, rejectTransfer } = useTransfers();
+  const { node, connectionStatus, refresh: refreshNode } = useNodeStatus(3000);
+  const { transfers, pendingIncomingTransfers, acceptTransfer, rejectTransfer, refresh: refreshTransfers } = useTransfers();
   const currentPendingTransfer = pendingIncomingTransfers.length > 0 ? pendingIncomingTransfers[0] : null;
+  const [currentApiPort, setCurrentApiPort] = useState<number>(() => apiClient.getPort());
   const prevStatusRef = useRef(connectionStatus);
   const [showReconnectedBanner, setShowReconnectedBanner] = useState(false);
 
@@ -76,6 +79,27 @@ export const AppLayout: React.FC = () => {
           )}
 
           <StatusIndicator status={indicator.status} label={indicator.label} />
+
+          <button
+            type="button"
+            className="top-bar-port-btn"
+            onClick={() => {
+              const target = prompt('Enter MeshDrop Backend API port to connect:', String(currentApiPort));
+              if (target) {
+                const p = parseInt(target.trim(), 10);
+                if (!isNaN(p) && p > 0 && p <= 65535) {
+                  const host = window.location.hostname || 'localhost';
+                  apiClient.setBaseUrl(`http://${host}:${p}`);
+                  setCurrentApiPort(p);
+                  refreshNode();
+                  refreshTransfers();
+                }
+              }
+            }}
+            title="Click to switch backend API port (useful for multi-node local testing)"
+          >
+            API: {currentApiPort}
+          </button>
 
           <div className="top-bar-divider" aria-hidden="true" />
 
@@ -192,6 +216,8 @@ export const AppLayout: React.FC = () => {
           await rejectTransfer(id, reason);
         }}
       />
+
+      <ToastContainer transfers={transfers} />
     </div>
   );
 };

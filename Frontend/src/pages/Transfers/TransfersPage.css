@@ -32,6 +32,107 @@
   flex: 1;
 }
 
+/* Pending Transfers Notification Banner */
+.pending-transfers-banner {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(59, 130, 246, 0.04));
+  border: 1.5px solid var(--primary, #2563eb);
+  border-radius: 0.625rem;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+  animation: pending-fade-in 0.2s ease-out;
+}
+
+@keyframes pending-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.pending-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pending-banner-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: var(--primary, #2563eb);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pending-banner-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pending-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.pending-banner-text strong {
+  font-size: 0.9375rem;
+  color: var(--text-primary, #0f172a);
+}
+
+.pending-banner-text span {
+  font-size: 0.8125rem;
+  color: var(--text-secondary, #64748b);
+}
+
+.pending-transfers-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.pending-transfer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background-color: var(--bg-card, #ffffff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 0.5rem;
+}
+
+.pending-item-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.pending-item-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #0f172a);
+  word-break: break-all;
+}
+
+.pending-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #64748b);
+}
+
+.pending-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 /* Top Summary Counters Row */
 .transfers-summary-counters {
   display: grid;

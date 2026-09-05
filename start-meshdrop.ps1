@@ -416,9 +416,10 @@ Log-Launcher "Frontend readiness verified"
 Write-Host "`n[4/4] Opening MeshDrop..." -ForegroundColor Yellow
 if (-not $NoBrowser) {
     try {
-        Start-Process $frontendUrl
-        Write-Host "  [OK] Browser opened" -ForegroundColor Green
-        Log-Launcher "Browser opened to $frontendUrl"
+        $browserTargetUrl = "$frontendUrl/?apiPort=$BackendPort"
+        Start-Process $browserTargetUrl
+        Write-Host "  [OK] Browser opened ($browserTargetUrl)" -ForegroundColor Green
+        Log-Launcher "Browser opened to $browserTargetUrl"
     } catch {
         Write-Host "  [NOTE] Could not open browser automatically: $_" -ForegroundColor Yellow
     }
@@ -430,7 +431,7 @@ Write-Host ""
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 Write-Host " MeshDrop is ready." -ForegroundColor Green
 Write-Host " Backend : http://localhost:$BackendPort" -ForegroundColor White
-Write-Host " Frontend: $frontendUrl" -ForegroundColor White
+Write-Host " Frontend: $frontendUrl/?apiPort=$BackendPort" -ForegroundColor White
 Write-Host " Mode    : $(if ($Production) { 'Production (Built assets)' } else { 'Development (Vite HMR)' })" -ForegroundColor Gray
 Write-Host " Logs    : $LogsDir" -ForegroundColor DarkGray
 Write-Host "----------------------------------------" -ForegroundColor Cyan

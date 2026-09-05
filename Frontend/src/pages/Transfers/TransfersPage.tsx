@@ -10,7 +10,7 @@ import { TransferDetailsModal } from '../../components/transfers/TransferDetails
 import { usePeers } from '../../hooks/usePeers';
 import { useTransfers } from '../../hooks/useTransfers';
 import { Transfer } from '../../types/Transfer';
-import { formatRelativeTime } from '../../utils/formatters';
+import { formatBytes, formatRelativeTime } from '../../utils/formatters';
 import './TransfersPage.css';
 
 type TransferFilter = 'ALL' | 'ACTIVE' | 'RESUMABLE' | 'COMPLETED' | 'FAILED';
@@ -19,6 +19,7 @@ export const TransfersPage: React.FC = () => {
   const {
     transfers,
     activeTransfers,
+    pendingIncomingTransfers,
     resumableTransfers,
     completedTransfers,
     failedTransfers,
@@ -136,6 +137,56 @@ export const TransfersPage: React.FC = () => {
           <Button variant="secondary" size="sm" onClick={() => refresh()}>
             Retry
           </Button>
+        </div>
+      )}
+
+      {/* Actionable Pending Transfers Banner */}
+      {pendingIncomingTransfers.length > 0 && (
+        <div className="pending-transfers-banner" role="alert">
+          <div className="pending-banner-header">
+            <div className="pending-banner-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </div>
+            <div className="pending-banner-text">
+              <strong>{pendingIncomingTransfers.length} Incoming Transfer{pendingIncomingTransfers.length > 1 ? 's' : ''} Awaiting Approval</strong>
+              <span>Review and accept incoming files to begin receiving</span>
+            </div>
+          </div>
+          <div className="pending-transfers-card-list">
+            {pendingIncomingTransfers.map((pt) => {
+              const ptId = pt.transferId || pt.id;
+              return (
+                <div key={ptId} className="pending-transfer-item">
+                  <div className="pending-item-details">
+                    <span className="pending-item-name">{pt.fileName}</span>
+                    <span className="pending-item-meta">
+                      {formatBytes(pt.fileSize)} &bull; From: <strong>{pt.peerName || 'Remote Peer'}</strong>
+                    </span>
+                  </div>
+                  <div className="pending-item-actions">
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => rejectTransfer(ptId, 'User declined transfer')}
+                    >
+                      Decline
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => acceptTransfer(ptId)}
+                    >
+                      Accept &amp; Download
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

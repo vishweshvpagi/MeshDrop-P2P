@@ -55,7 +55,7 @@ public class FileTransferService {
     private final ConcurrentHashMap<UUID, CompletableFuture<Boolean>> pendingInboundApprovals = new ConcurrentHashMap<>();
     private volatile boolean autoAccept = true;
 
-    private volatile ApprovalHandler approvalHandler = (meta, sender) -> CompletableFuture.completedFuture(true);
+    private volatile ApprovalHandler approvalHandler = null;
 
     public FileTransferService(
             NodeIdentity localIdentity,
@@ -90,7 +90,7 @@ public class FileTransferService {
     }
 
     public void setApprovalHandler(ApprovalHandler approvalHandler) {
-        this.approvalHandler = approvalHandler != null ? approvalHandler : (meta, sender) -> CompletableFuture.completedFuture(false);
+        this.approvalHandler = approvalHandler;
     }
 
     public boolean acceptTransfer(UUID transferId) {

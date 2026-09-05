@@ -68,6 +68,7 @@ public class CommandLineInterface implements MessageListener {
         this.node = node;
         this.reader = reader != null ? reader : new BufferedReader(new InputStreamReader(System.in));
         this.output = output;
+        this.autoAccept = node.getFileTransferService() != null && node.getFileTransferService().isAutoAccept();
         registerCommands();
 
         // Register as a message listener to display incoming messages
@@ -505,9 +506,15 @@ public class CommandLineInterface implements MessageListener {
             String arg = cmd.arg(0).toLowerCase();
             if (arg.equals("on") || arg.equals("true") || arg.equals("enable") || arg.equals("yes")) {
                 autoAccept = true;
+                if (node.getFileTransferService() != null) {
+                    node.getFileTransferService().setAutoAccept(true);
+                }
                 return CommandResult.ok("Auto-accept is now ENABLED. Incoming file offers will be accepted automatically.");
             } else if (arg.equals("off") || arg.equals("false") || arg.equals("disable") || arg.equals("no")) {
                 autoAccept = false;
+                if (node.getFileTransferService() != null) {
+                    node.getFileTransferService().setAutoAccept(false);
+                }
                 return CommandResult.ok("Auto-accept is now DISABLED. You will be prompted before accepting files.");
             } else {
                 return CommandResult.error("Usage: autoaccept [on|off]");

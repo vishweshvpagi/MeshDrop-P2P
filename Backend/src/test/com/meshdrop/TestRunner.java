@@ -79,6 +79,7 @@ import com.meshdrop.transfer.LargeFileTransferEngineTest;
 import com.meshdrop.transfer.TransferCodecExtendedTest;
 import com.meshdrop.transfer.SlidingWindowFlowControlTest;
 import com.meshdrop.transfer.RealInterruptedResumeTest;
+import com.meshdrop.transfer.TwoNodeAcceptRejectE2ETest;
 import com.meshdrop.storage.StorageManagerTest;
 
 import java.util.ArrayList;
@@ -423,6 +424,10 @@ public class TestRunner {
         allTests.add(new TestCase() {
             public String name() { return "HttpControlServerTest"; }
             public void run() throws Exception { new com.meshdrop.api.HttpControlServerTest().runAll(); }
+        });
+        allTests.add(new TestCase() {
+            public String name() { return "TwoNodeAcceptRejectE2ETest"; }
+            public void run() throws Exception { new TwoNodeAcceptRejectE2ETest().runAll(); }
         });
 
         List<TestCase> testsToRun = allTests;
