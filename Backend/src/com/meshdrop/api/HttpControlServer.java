@@ -13,6 +13,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -558,9 +559,15 @@ public class HttpControlServer implements AutoCloseable {
                 return;
             }
 
-            Path path = Path.of(filePathStr);
-            if (!Files.exists(path) || !Files.isRegularFile(path)) {
-                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"File does not exist or is not a regular file: " + filePathStr + "\"}");
+            Path path = resolveFilePath(filePathStr);
+            if (path == null) {
+                String safeName = Path.of(filePathStr).getFileName() != null ? Path.of(filePathStr).getFileName().toString() : filePathStr;
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("success", false);
+                err.put("error", "File does not exist: '" + filePathStr +
+                        "'. Web browsers hide the directory path for privacy. " +
+                        "Please enter the complete disk path (e.g. D:\\" + safeName + " or C:\\Users\\...\\" + safeName + ").");
+                sendJsonResponse(exchange, 400, JsonUtils.toJson(err));
                 return;
             }
 
@@ -592,6 +599,50 @@ public class HttpControlServer implements AutoCloseable {
                 err.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 sendJsonResponse(exchange, 500, JsonUtils.toJson(err));
             }
+        }
+
+        private Path resolveFilePath(String filePathStr) {
+            Path direct = Path.of(filePathStr);
+            if (Files.exists(direct) && Files.isRegularFile(direct)) {
+                return direct;
+            }
+
+            // If given a naked filename or relative path that wasn't found directly,
+            // check common locations (project data dir, user home folders, root drives).
+            String fileName = direct.getFileName() != null ? direct.getFileName().toString() : filePathStr;
+
+            // 1. data/ and ../data/
+            Path dataCandidate = Path.of("data", fileName);
+            if (Files.exists(dataCandidate) && Files.isRegularFile(dataCandidate)) return dataCandidate;
+
+            Path parentDataCandidate = Path.of("..", "data", fileName);
+            if (Files.exists(parentDataCandidate) && Files.isRegularFile(parentDataCandidate)) return parentDataCandidate;
+
+            // 2. User home directories
+            String userHome = System.getProperty("user.home");
+            if (userHome != null) {
+                Path desktop = Path.of(userHome, "Desktop", fileName);
+                if (Files.exists(desktop) && Files.isRegularFile(desktop)) return desktop;
+
+                Path downloads = Path.of(userHome, "Downloads", fileName);
+                if (Files.exists(downloads) && Files.isRegularFile(downloads)) return downloads;
+
+                Path documents = Path.of(userHome, "Documents", fileName);
+                if (Files.exists(documents) && Files.isRegularFile(documents)) return documents;
+            }
+
+            // 3. Root drives (e.g. D:\fileName, C:\fileName, etc.)
+            File[] roots = File.listRoots();
+            if (roots != null) {
+                for (File root : roots) {
+                    Path rootCandidate = Path.of(root.getPath(), fileName);
+                    if (Files.exists(rootCandidate) && Files.isRegularFile(rootCandidate)) {
+                        return rootCandidate;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private void handleResumeTransfer(HttpExchange exchange, Transfer transfer) throws IOException {

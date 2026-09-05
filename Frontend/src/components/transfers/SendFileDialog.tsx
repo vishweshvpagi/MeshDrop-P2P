@@ -225,7 +225,7 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
                   required
                 />
                 <span className="input-hint">
-                  The Java engine streams this file directly from disk without browser memory overhead.
+                  The Java engine streams directly from disk. For files outside the project directory, enter the full path (e.g. {selectedFileMeta ? <code>D:\{selectedFileMeta.name}</code> : <code>D:\file.ext</code>}).
                 </span>
               </div>
             </div>
