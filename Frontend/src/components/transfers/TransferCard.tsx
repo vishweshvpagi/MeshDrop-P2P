@@ -23,6 +23,8 @@ export interface TransferCardProps {
   onResume?: (transferId: string) => Promise<unknown> | void;
   onRetry?: (transferId: string) => Promise<unknown> | void;
   onRemove?: (transferId: string) => Promise<unknown> | void;
+  onAccept?: (transferId: string) => Promise<unknown> | void;
+  onReject?: (transferId: string, reason?: string) => Promise<unknown> | void;
   onOpenDetails?: (transfer: Transfer) => void;
 }
 
@@ -33,12 +35,14 @@ export const TransferCard: React.FC<TransferCardProps> = ({
   onResume,
   onRetry,
   onRemove,
+  onAccept,
+  onReject,
   onOpenDetails,
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
   const [showCancelConfirm, setShowCancelConfirm] = useState<boolean>(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState<boolean>(false);
-  const [actionLoading, setActionLoading] = useState<'resume' | 'retry' | 'cancel' | 'remove' | null>(null);
+  const [actionLoading, setActionLoading] = useState<'resume' | 'retry' | 'cancel' | 'remove' | 'accept' | 'reject' | null>(null);
 
   const transferId = transfer.transferId || transfer.id;
   const isUpload = transfer.direction === 'OUTGOING' || transfer.direction === 'UPLOAD';
@@ -136,6 +140,30 @@ export const TransferCard: React.FC<TransferCardProps> = ({
       await onRetry(transferId);
     } catch (err) {
       console.error('Failed to retry transfer:', err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleAccept = async () => {
+    if (!onAccept) return;
+    setActionLoading('accept');
+    try {
+      await onAccept(transferId);
+    } catch (err) {
+      console.error('Failed to accept transfer:', err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!onReject) return;
+    setActionLoading('reject');
+    try {
+      await onReject(transferId);
+    } catch (err) {
+      console.error('Failed to reject transfer:', err);
     } finally {
       setActionLoading(null);
     }
@@ -267,6 +295,28 @@ export const TransferCard: React.FC<TransferCardProps> = ({
         {/* Action Controls & Confirmation States */}
         <div className="transfer-actions-right">
           <div className="transfer-btn-cluster">
+            {status === 'WAITING_FOR_ACCEPT' && !isUpload && onAccept && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAccept}
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === 'accept' ? 'Accepting...' : 'Accept'}
+              </Button>
+            )}
+
+            {status === 'WAITING_FOR_ACCEPT' && !isUpload && onReject && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleReject}
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === 'reject' ? 'Declining...' : 'Decline'}
+              </Button>
+            )}
+
             {canResume && onResume && (
               <Button
                 variant="primary"

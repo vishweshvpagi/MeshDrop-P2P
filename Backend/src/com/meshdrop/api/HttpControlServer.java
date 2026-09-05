@@ -13,6 +13,10 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
+import java.awt.EventQueue;
+import java.awt.FileDialog;
+import java.awt.Frame;
+import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,7 +31,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Minimal local HTTP control server for MeshDrop.
@@ -72,6 +78,7 @@ public class HttpControlServer implements AutoCloseable {
         server.createContext("/api/connect", new ConnectHandler());
         server.createContext("/api/transfers", new TransfersHandler());
         server.createContext("/api/transfers/cancel", new TransferCancelHandler());
+        server.createContext("/api/dialog/open-file", new OpenFileDialogHandler());
 
         server.start();
         Logger.info("[API] MeshDrop Control API listening on http://" + host + ":" + getPort());
@@ -465,6 +472,16 @@ public class HttpControlServer implements AutoCloseable {
                     return;
                 }
 
+                // Check for /api/transfers/pending
+                if (segments.length == 1 && "pending".equalsIgnoreCase(segments[0])) {
+                    if ("GET".equals(method)) {
+                        handleGetPendingTransfers(exchange);
+                    } else {
+                        sendJsonResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
+                    }
+                    return;
+                }
+
                 UUID transferId;
                 try {
                     transferId = UUID.fromString(segments[0]);
@@ -514,6 +531,8 @@ public class HttpControlServer implements AutoCloseable {
                         case "cancel" -> handleCancelTransfer(exchange, transfer);
                         case "retry" -> handleRetryTransfer(exchange, transfer);
                         case "interrupt" -> handleInterruptTransfer(exchange, transfer);
+                        case "accept" -> handleAcceptTransfer(exchange, transfer);
+                        case "reject" -> handleRejectTransfer(exchange, transfer);
                         default -> sendJsonResponse(exchange, 404, "{\"success\":false,\"error\":\"Unknown action: " + action + "\"}");
                     }
                     return;
@@ -695,6 +714,51 @@ public class HttpControlServer implements AutoCloseable {
             sendJsonResponse(exchange, 200, JsonUtils.toJson(res));
         }
 
+        private void handleGetPendingTransfers(HttpExchange exchange) throws IOException {
+            List<Map<String, Object>> list = new ArrayList<>();
+            if (node.getFileTransferService() != null) {
+                var transfers = node.getFileTransferService().getPendingTransfers();
+                for (Transfer t : transfers) {
+                    list.add(transferToMap(t));
+                }
+            }
+            sendJsonResponse(exchange, 200, JsonUtils.toJson(list));
+        }
+
+        private void handleAcceptTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
+            try {
+                boolean accepted = node.acceptTransfer(transfer.getTransferId());
+                if (accepted) {
+                    sendJsonResponse(exchange, 200, JsonUtils.toJson(transferToMap(transfer)));
+                } else {
+                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer could not be accepted (may not be waiting for accept or expired)\"}");
+                }
+            } catch (Exception e) {
+                sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
+            }
+        }
+
+        private void handleRejectTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
+            String body = "";
+            try (InputStream is = exchange.getRequestBody()) {
+                body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            String reason = null;
+            if (!body.isBlank()) {
+                reason = JsonUtils.getString(body, "reason");
+            }
+            try {
+                boolean rejected = node.rejectTransfer(transfer.getTransferId(), reason);
+                if (rejected) {
+                    sendJsonResponse(exchange, 200, "{\"success\":true,\"transferId\":\"" + transfer.getTransferId() + "\"}");
+                } else {
+                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer could not be rejected (may not be waiting for accept or expired)\"}");
+                }
+            } catch (Exception e) {
+                sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
+            }
+        }
+
         private void handleLegacyCancel(HttpExchange exchange) throws IOException {
             String body;
             try (InputStream is = exchange.getRequestBody()) {
@@ -780,4 +844,75 @@ public class HttpControlServer implements AutoCloseable {
             sendJsonResponse(exchange, 200, JsonUtils.toJson(res));
         }
     }
+
+    private class OpenFileDialogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (handleCors(exchange)) return;
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod()) && !"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendJsonResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+
+            if (GraphicsEnvironment.isHeadless()) {
+                Map<String, Object> res = new LinkedHashMap<>();
+                res.put("supported", false);
+                res.put("selected", false);
+                res.put("error", "Headless environment; native file dialog unavailable.");
+                sendJsonResponse(exchange, 200, JsonUtils.toJson(res));
+                return;
+            }
+
+            CompletableFuture<Map<String, Object>> future = new CompletableFuture<>();
+            EventQueue.invokeLater(() -> {
+                Frame frame = new Frame();
+                frame.setAlwaysOnTop(true);
+                try {
+                    FileDialog dialog = new FileDialog(frame, "Select File to Send - MeshDrop", FileDialog.LOAD);
+                    dialog.setVisible(true);
+                    String file = dialog.getFile();
+                    String dir = dialog.getDirectory();
+                    dialog.dispose();
+                    frame.dispose();
+
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    if (file != null && dir != null) {
+                        Path fullPath = Path.of(dir, file);
+                        result.put("supported", true);
+                        result.put("selected", true);
+                        result.put("filePath", fullPath.toAbsolutePath().toString());
+                        result.put("fileName", fullPath.getFileName().toString());
+                        try {
+                            result.put("fileSize", Files.size(fullPath));
+                        } catch (Exception ignored) {
+                            result.put("fileSize", 0L);
+                        }
+                    } else {
+                        result.put("supported", true);
+                        result.put("selected", false);
+                    }
+                    future.complete(result);
+                } catch (Throwable t) {
+                    frame.dispose();
+                    Map<String, Object> err = new LinkedHashMap<>();
+                    err.put("supported", false);
+                    err.put("selected", false);
+                    err.put("error", t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName());
+                    future.complete(err);
+                }
+            });
+
+            try {
+                Map<String, Object> result = future.get(120, TimeUnit.SECONDS);
+                sendJsonResponse(exchange, 200, JsonUtils.toJson(result));
+            } catch (Exception e) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("supported", true);
+                err.put("selected", false);
+                err.put("error", "File selection timed out or was interrupted");
+                sendJsonResponse(exchange, 200, JsonUtils.toJson(err));
+            }
+        }
+    }
 }
+

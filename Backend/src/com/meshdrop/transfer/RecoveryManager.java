@@ -125,7 +125,13 @@ public class RecoveryManager {
             Files.move(tmpPath, metaPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             // Fallback for filesystems without atomic move support
-            Files.move(tmpPath, metaPath, StandardCopyOption.REPLACE_EXISTING);
+            try {
+                Files.move(tmpPath, metaPath, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException ex) {
+                // On Windows, if REPLACE_EXISTING fails due to transient file handle locking, delete then move
+                Files.deleteIfExists(metaPath);
+                Files.move(tmpPath, metaPath);
+            }
         }
     }
 

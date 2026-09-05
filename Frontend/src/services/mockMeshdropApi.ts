@@ -91,6 +91,31 @@ export class MockMeshDropService implements MeshDropApi {
     });
   }
 
+  async acceptTransfer(transferId: string): Promise<Transfer> {
+    const found = mockTransfers.find((t) => t.id === transferId || t.transferId === transferId);
+    if (!found) {
+      throw new Error(`Transfer not found: ${transferId}`);
+    }
+    return Promise.resolve({ ...found, state: 'TRANSFERRING', status: 'TRANSFERRING' });
+  }
+
+  async rejectTransfer(transferId: string, _reason?: string): Promise<{ success: boolean; transferId?: string; error?: string }> {
+    return Promise.resolve({
+      success: true,
+      transferId,
+    });
+  }
+
+  async openFileDialog(): Promise<{ supported: boolean; selected: boolean; filePath?: string; fileName?: string; fileSize?: number; error?: string }> {
+    return Promise.resolve({
+      supported: true,
+      selected: true,
+      filePath: 'data/mock_sample.dat',
+      fileName: 'mock_sample.dat',
+      fileSize: 1048576,
+    });
+  }
+
   async getPeer(peerId: string): Promise<Peer> {
     const peer = mockPeers.find((p) => p.id === peerId);
     if (!peer) throw new Error('Peer not found');

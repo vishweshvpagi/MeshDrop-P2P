@@ -304,7 +304,11 @@ public class FileReceiver implements AutoCloseable {
         transfer.incrementChunksTransferred();
 
         if (listener != null) {
-            listener.onTransferProgress(transfer);
+            Thread.ofVirtual().start(() -> {
+                try {
+                    listener.onTransferProgress(transfer);
+                } catch (Exception ignored) {}
+            });
         }
     }
 

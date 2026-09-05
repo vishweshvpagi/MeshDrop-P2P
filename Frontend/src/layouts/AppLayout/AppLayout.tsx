@@ -1,12 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { IncomingTransferModal } from '../../components/transfers/IncomingTransferModal';
 import { StatusIndicator, StatusType } from '../../components/StatusIndicator/StatusIndicator';
 import { ThemeToggle } from '../../components/ThemeToggle/ThemeToggle';
 import { useNodeStatus } from '../../hooks/useNodeStatus';
+import { useTransfers } from '../../hooks/useTransfers';
 import './AppLayout.css';
 
 export const AppLayout: React.FC = () => {
   const { node, connectionStatus } = useNodeStatus(3000);
+  const { pendingIncomingTransfers, acceptTransfer, rejectTransfer } = useTransfers();
+  const currentPendingTransfer = pendingIncomingTransfers.length > 0 ? pendingIncomingTransfers[0] : null;
   const prevStatusRef = useRef(connectionStatus);
   const [showReconnectedBanner, setShowReconnectedBanner] = useState(false);
 
@@ -178,6 +182,16 @@ export const AppLayout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      <IncomingTransferModal
+        transfer={currentPendingTransfer}
+        onAccept={async (id) => {
+          await acceptTransfer(id);
+        }}
+        onReject={async (id, reason) => {
+          await rejectTransfer(id, reason);
+        }}
+      />
     </div>
   );
 };

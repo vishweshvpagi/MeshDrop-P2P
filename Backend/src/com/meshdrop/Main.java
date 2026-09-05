@@ -36,6 +36,7 @@ public class Main {
         String dataDirStr = null;
         boolean discoveryEnabled = true;
         boolean enableCli = true;
+        boolean autoAcceptOffers = false;
         String connectHost = null;
         int connectPort = 0;
 
@@ -56,6 +57,8 @@ public class Main {
                 discoveryEnabled = false;
             } else if ("--no-cli".equalsIgnoreCase(args[i])) {
                 enableCli = false;
+            } else if ("--auto-accept".equalsIgnoreCase(args[i])) {
+                autoAcceptOffers = true;
             } else if ("connect".equalsIgnoreCase(args[i]) && i + 2 < args.length) {
                 connectHost = args[++i];
                 connectPort = Integer.parseInt(args[++i]);
@@ -105,6 +108,10 @@ public class Main {
 
         try {
             node.start();
+
+            if (node.getFileTransferService() != null) {
+                node.getFileTransferService().setAutoAccept(autoAcceptOffers);
+            }
 
             if (finalApiServer != null) {
                 try {

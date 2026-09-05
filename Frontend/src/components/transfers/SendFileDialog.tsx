@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Badge } from '../Badge/Badge';
 import { Button } from '../Button/Button';
+import { meshDropApi } from '../../services/meshdropApi';
 import { Peer } from '../../types/Peer';
 import { formatBytes } from '../../utils/formatters';
 import './SendFileDialog.css';
@@ -28,6 +29,7 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
   const [filePath, setFilePath] = useState<string>('');
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isOpeningNativePicker, setIsOpeningNativePicker] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +90,29 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
     });
     setFilePath(presetPath);
     setErrorMessage(null);
+  };
+
+  const handleNativeBrowse = async () => {
+    setIsOpeningNativePicker(true);
+    setErrorMessage(null);
+    try {
+      const res = await meshDropApi.openFileDialog();
+      if (res.selected && res.filePath) {
+        setFilePath(res.filePath);
+        setSelectedFileMeta({
+          name: res.fileName || res.filePath.split('\\').pop()?.split('/').pop() || 'file',
+          size: res.fileSize || 0,
+          type: 'application/octet-stream',
+        });
+      } else if (!res.supported) {
+        // Fallback to browser file picker if native dialog is not supported
+        fileInputRef.current?.click();
+      }
+    } catch {
+      fileInputRef.current?.click();
+    } finally {
+      setIsOpeningNativePicker(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -162,10 +187,20 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
                 />
                 <Button
                   type="button"
+                  variant="primary"
+                  size="sm"
+                  onClick={handleNativeBrowse}
+                  disabled={isSubmitting || isOpeningNativePicker}
+                  isLoading={isOpeningNativePicker}
+                >
+                  📁 Browse Files (Native Dialog)
+                </Button>
+                <Button
+                  type="button"
                   variant="secondary"
                   size="sm"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isOpeningNativePicker}
                 >
                   Browse Local Files...
                 </Button>

@@ -13,6 +13,7 @@ export interface TransferCounters {
 export interface UseTransfersResult {
   transfers: Transfer[];
   activeTransfers: Transfer[];
+  pendingIncomingTransfers: Transfer[];
   resumableTransfers: Transfer[];
   completedTransfers: Transfer[];
   failedTransfers: Transfer[];
@@ -24,6 +25,8 @@ export interface UseTransfersResult {
   isStale: boolean;
   refresh: () => Promise<void>;
   startTransfer: (peerId: string, filePath: string) => Promise<{ success: boolean; transferId?: string; error?: string }>;
+  acceptTransfer: (transferId: string) => Promise<Transfer>;
+  rejectTransfer: (transferId: string, reason?: string) => Promise<{ success: boolean; transferId?: string; error?: string }>;
   resumeTransfer: (transferId: string) => Promise<{ success: boolean; transferId?: string; state?: string; error?: string }>;
   retryTransfer: (transferId: string) => Promise<{ success: boolean; transferId?: string; state?: string; error?: string }>;
   cancelTransfer: (transferId: string) => Promise<{ success: boolean; transferId?: string; error?: string }>;
@@ -94,6 +97,24 @@ export function useTransfers(basePollIntervalMs: number = 1500): UseTransfersRes
     [fetchTransfers]
   );
 
+  const acceptTransfer = useCallback(
+    async (transferId: string) => {
+      const result = await meshDropApi.acceptTransfer(transferId);
+      await fetchTransfers();
+      return result;
+    },
+    [fetchTransfers]
+  );
+
+  const rejectTransfer = useCallback(
+    async (transferId: string, reason?: string) => {
+      const result = await meshDropApi.rejectTransfer(transferId, reason);
+      await fetchTransfers();
+      return result;
+    },
+    [fetchTransfers]
+  );
+
   const resumeTransfer = useCallback(
     async (transferId: string) => {
       const result = await meshDropApi.resumeTransfer(transferId);
@@ -131,6 +152,11 @@ export function useTransfers(basePollIntervalMs: number = 1500): UseTransfersRes
   );
 
   // Computed collections
+  const pendingIncomingTransfers = transfers.filter(
+    (t) =>
+      (t.direction === 'INCOMING' || t.direction === 'DOWNLOAD') &&
+      (t.state === 'WAITING_FOR_ACCEPT' || t.status === 'WAITING_FOR_ACCEPT')
+  );
   const activeTransfers = transfers.filter((t) => isTransferActive(t.state || t.status));
   const resumableTransfers = transfers.filter((t) => isTransferResumable(t));
   const completedTransfers = transfers.filter((t) => (t.state || t.status) === 'COMPLETED');
@@ -148,8 +174,8 @@ export function useTransfers(basePollIntervalMs: number = 1500): UseTransfersRes
     total: transfers.length,
   };
 
-  // Adaptive polling: 1500ms when transfers are active, 4000ms when idle
-  const hasActiveTransfers = activeTransfers.length > 0;
+  // Adaptive polling: 1500ms when transfers are active or pending approval, 4000ms when idle
+  const hasActiveTransfers = activeTransfers.length > 0 || pendingIncomingTransfers.length > 0;
   const currentInterval = hasActiveTransfers ? basePollIntervalMs : Math.max(basePollIntervalMs, 4000);
 
   useEffect(() => {
@@ -187,6 +213,7 @@ export function useTransfers(basePollIntervalMs: number = 1500): UseTransfersRes
   return {
     transfers,
     activeTransfers,
+    pendingIncomingTransfers,
     resumableTransfers,
     completedTransfers,
     failedTransfers,
@@ -198,6 +225,8 @@ export function useTransfers(basePollIntervalMs: number = 1500): UseTransfersRes
     isStale,
     refresh: fetchTransfers,
     startTransfer,
+    acceptTransfer,
+    rejectTransfer,
     resumeTransfer,
     retryTransfer,
     cancelTransfer,

@@ -29,6 +29,8 @@ export const TransfersPage: React.FC = () => {
     isStale,
     refresh,
     startTransfer,
+    acceptTransfer,
+    rejectTransfer,
     resumeTransfer,
     retryTransfer,
     cancelTransfer,
@@ -264,6 +266,8 @@ export const TransfersPage: React.FC = () => {
               <TransferCard
                 key={t.transferId || t.id}
                 transfer={t}
+                onAccept={acceptTransfer}
+                onReject={rejectTransfer}
                 onResume={resumeTransfer}
                 onRetry={retryTransfer}
                 onCancel={cancelTransfer}

@@ -319,6 +319,7 @@ public class FileSender {
                         this.currentInFlightCount = inFlight.size();
                     }
 
+                    boolean notifyProgress = false;
                     // Wait for window progress or ACK timeout
                     synchronized (windowLock) {
                         if (failed || transfer.getState() == TransferState.FAILED) {
@@ -337,9 +338,7 @@ public class FileSender {
                             if (highestAckedOffset >= 0) {
                                 transfer.setBytesTransferred(highestAckedOffset);
                                 transfer.setChunksTransferred((int) baseChunk);
-                                if (listener != null) {
-                                    listener.onTransferProgress(transfer);
-                                }
+                                notifyProgress = true;
                             }
                         }
 
@@ -386,9 +385,7 @@ public class FileSender {
                                 if (highestAckedOffset >= 0) {
                                     transfer.setBytesTransferred(highestAckedOffset);
                                     transfer.setChunksTransferred((int) baseChunk);
-                                    if (listener != null) {
-                                        listener.onTransferProgress(transfer);
-                                    }
+                                    notifyProgress = true;
                                 }
                             }
 
@@ -417,6 +414,10 @@ public class FileSender {
                                 inFlight.put(baseChunk, new InFlight(baseChunk, unacked.offset, bytesRead, System.currentTimeMillis(), unacked.retryCount + 1));
                             }
                         }
+                    }
+
+                    if (notifyProgress && listener != null) {
+                        listener.onTransferProgress(transfer);
                     }
                 }
 

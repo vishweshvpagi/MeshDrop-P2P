@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
+import { IncomingTransferModal } from '../components/transfers/IncomingTransferModal';
 import { SendFileDialog } from '../components/transfers/SendFileDialog';
 import { TransferCard } from '../components/transfers/TransferCard';
 import { TransferDetailsModal } from '../components/transfers/TransferDetailsModal';
@@ -454,5 +455,92 @@ describe('Phase 3 & 4 File Transfers Test Suite', () => {
     const formatted = formatTimestamp(1757073600000);
     expect(typeof formatted).toBe('string');
     expect(formatted.length).toBeGreaterThan(0);
+  });
+
+  // 24. IncomingTransferModal rendering
+  it('24. renders IncomingTransferModal with peer name, file name, and action buttons', () => {
+    const pendingTransfer: Transfer = {
+      id: 'tx-inbound-1',
+      transferId: 'tx-inbound-1',
+      fileName: 'dataset.zip',
+      fileSize: 104857600, // 100 MB
+      transferredBytes: 0,
+      direction: 'INCOMING',
+      state: 'WAITING_FOR_ACCEPT',
+      status: 'WAITING_FOR_ACCEPT',
+      peerId: 'peer-uuid-1',
+      peerName: 'SenderNode',
+      sha256: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    };
+
+    const html = renderToString(
+      <IncomingTransferModal
+        transfer={pendingTransfer}
+        onAccept={async () => {}}
+        onReject={async () => {}}
+      />
+    );
+
+    expect(html).toContain('Incoming File Transfer');
+    expect(html).toContain('SenderNode');
+    expect(html).toContain('dataset.zip');
+    expect(html).toContain('100 MB');
+    expect(html).toContain('Accept &amp; Download');
+    expect(html).toContain('Decline');
+  });
+
+  // 25. Accept transfer API call
+  it('25. verifies acceptTransfer API calls POST /api/transfers/{id}/accept', async () => {
+    const acceptSpy = vi.spyOn(meshDropApi, 'acceptTransfer').mockResolvedValueOnce({
+      id: 'tx-accept-1',
+      transferId: 'tx-accept-1',
+      fileName: 'data.bin',
+      fileSize: 1024,
+      transferredBytes: 0,
+      direction: 'INCOMING',
+      state: 'TRANSFERRING',
+      status: 'TRANSFERRING',
+      peerId: 'p1',
+      peerName: 'NodeA',
+    });
+
+    const res = await meshDropApi.acceptTransfer('tx-accept-1');
+    expect(res.id).toBe('tx-accept-1');
+    expect(acceptSpy).toHaveBeenCalledWith('tx-accept-1');
+
+    acceptSpy.mockRestore();
+  });
+
+  // 26. Reject transfer API call
+  it('26. verifies rejectTransfer API calls POST /api/transfers/{id}/reject', async () => {
+    const rejectSpy = vi.spyOn(meshDropApi, 'rejectTransfer').mockResolvedValueOnce({
+      success: true,
+      transferId: 'tx-reject-1',
+    });
+
+    const res = await meshDropApi.rejectTransfer('tx-reject-1', 'Not wanted');
+    expect(res.success).toBe(true);
+    expect(rejectSpy).toHaveBeenCalledWith('tx-reject-1', 'Not wanted');
+
+    rejectSpy.mockRestore();
+  });
+
+  // 27. Native openFileDialog API call
+  it('27. verifies openFileDialog API calls POST /api/dialog/open-file', async () => {
+    const dialogSpy = vi.spyOn(meshDropApi, 'openFileDialog').mockResolvedValueOnce({
+      supported: true,
+      selected: true,
+      filePath: 'C:\\Users\\User\\Documents\\report.pdf',
+      fileName: 'report.pdf',
+      fileSize: 2048576,
+    });
+
+    const res = await meshDropApi.openFileDialog();
+    expect(res.supported).toBe(true);
+    expect(res.selected).toBe(true);
+    expect(res.filePath).toBe('C:\\Users\\User\\Documents\\report.pdf');
+    expect(dialogSpy).toHaveBeenCalled();
+
+    dialogSpy.mockRestore();
   });
 });

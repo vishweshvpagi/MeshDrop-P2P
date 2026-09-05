@@ -65,6 +65,21 @@ export interface MeshDropApi {
   interruptTransfer(transferId: string): Promise<{ success: boolean; transferId?: string; state?: string; error?: string }>;
 
   /**
+   * Accepts an incoming file transfer offer.
+   */
+  acceptTransfer(transferId: string): Promise<Transfer>;
+
+  /**
+   * Rejects an incoming file transfer offer.
+   */
+  rejectTransfer(transferId: string, reason?: string): Promise<{ success: boolean; transferId?: string; error?: string }>;
+
+  /**
+   * Invokes native host OS file dialog on the Java backend.
+   */
+  openFileDialog(): Promise<{ supported: boolean; selected: boolean; filePath?: string; fileName?: string; fileSize?: number; error?: string }>;
+
+  /**
    * Retrieves single peer details.
    */
   getPeer(peerId: string): Promise<Peer>;
@@ -136,6 +151,18 @@ export class LiveMeshDropService implements MeshDropApi {
 
   async interruptTransfer(transferId: string): Promise<{ success: boolean; transferId?: string; state?: string; error?: string }> {
     return apiClient.post(`/api/transfers/${transferId}/interrupt`);
+  }
+
+  async acceptTransfer(transferId: string): Promise<Transfer> {
+    return apiClient.post<Transfer>(`/api/transfers/${transferId}/accept`);
+  }
+
+  async rejectTransfer(transferId: string, reason?: string): Promise<{ success: boolean; transferId?: string; error?: string }> {
+    return apiClient.post<{ success: boolean; transferId?: string; error?: string }>(`/api/transfers/${transferId}/reject`, { reason });
+  }
+
+  async openFileDialog(): Promise<{ supported: boolean; selected: boolean; filePath?: string; fileName?: string; fileSize?: number; error?: string }> {
+    return apiClient.post<{ supported: boolean; selected: boolean; filePath?: string; fileName?: string; fileSize?: number; error?: string }>('/api/dialog/open-file');
   }
 
   async connectPeer(host: string, port: number): Promise<{ success: boolean; connectionId?: number; error?: string }> {

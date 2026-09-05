@@ -577,6 +577,14 @@ public class Node {
         }
     }
 
+    public boolean acceptTransfer(UUID transferId) {
+        return fileTransferService != null && fileTransferService.acceptTransfer(transferId);
+    }
+
+    public boolean rejectTransfer(UUID transferId, String reason) {
+        return fileTransferService != null && fileTransferService.rejectTransfer(transferId, reason);
+    }
+
     public com.meshdrop.storage.StorageManager getStorageManager() {
         return storageManager;
     }

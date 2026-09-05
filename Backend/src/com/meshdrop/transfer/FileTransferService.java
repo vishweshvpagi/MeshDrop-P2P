@@ -13,6 +13,7 @@ import com.meshdrop.util.Logger;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -51,6 +52,8 @@ public class FileTransferService {
     private final ConcurrentHashMap<UUID, FileSender> activeSenders = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, TcpConnection> transferConnections = new ConcurrentHashMap<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
+    private final ConcurrentHashMap<UUID, CompletableFuture<Boolean>> pendingInboundApprovals = new ConcurrentHashMap<>();
+    private volatile boolean autoAccept = true;
 
     private volatile ApprovalHandler approvalHandler = (meta, sender) -> CompletableFuture.completedFuture(true);
 
@@ -88,6 +91,48 @@ public class FileTransferService {
 
     public void setApprovalHandler(ApprovalHandler approvalHandler) {
         this.approvalHandler = approvalHandler != null ? approvalHandler : (meta, sender) -> CompletableFuture.completedFuture(false);
+    }
+
+    public boolean acceptTransfer(UUID transferId) {
+        if (transferId == null) return false;
+        CompletableFuture<Boolean> future = pendingInboundApprovals.remove(transferId);
+        if (future != null) {
+            return future.complete(true);
+        }
+        return false;
+    }
+
+    public boolean rejectTransfer(UUID transferId, String reason) {
+        if (transferId == null) return false;
+        CompletableFuture<Boolean> future = pendingInboundApprovals.remove(transferId);
+        if (future != null) {
+            Transfer transfer = transferManager.getTransfer(transferId).orElse(null);
+            if (transfer != null) {
+                transfer.setErrorMessage(reason != null ? reason : "Declined by user");
+            }
+            return future.complete(false);
+        }
+        return false;
+    }
+
+    public boolean isPendingApproval(UUID transferId) {
+        return transferId != null && pendingInboundApprovals.containsKey(transferId);
+    }
+
+    public List<Transfer> getPendingTransfers() {
+        List<Transfer> list = new ArrayList<>();
+        for (UUID id : pendingInboundApprovals.keySet()) {
+            transferManager.getTransfer(id).ifPresent(list::add);
+        }
+        return list;
+    }
+
+    public boolean isAutoAccept() {
+        return autoAccept;
+    }
+
+    public void setAutoAccept(boolean autoAccept) {
+        this.autoAccept = autoAccept;
     }
 
     public TransferManager getTransferManager() {
@@ -255,6 +300,11 @@ public class FileTransferService {
             transfer.cancel("Transfer cancelled by user");
         }
 
+        CompletableFuture<Boolean> inboundApproval = pendingInboundApprovals.remove(transferId);
+        if (inboundApproval != null) {
+            inboundApproval.complete(false);
+        }
+
         FileReceiver receiver = activeReceivers.remove(transferId);
         if (receiver != null) {
             receiver.abort("Transfer cancelled by user");
@@ -409,12 +459,43 @@ public class FileTransferService {
         Transfer transfer = new Transfer(metadata, TransferDirection.DOWNLOAD, null);
         transferManager.registerTransfer(transfer);
         transferConnections.put(metadata.transferId(), connection);
+        transfer.transitionTo(TransferState.WAITING_FOR_ACCEPT);
 
         Logger.info("[TRANSFER] Received FILE_OFFER: " + metadata.fileName() +
                 " (" + metadata.fileSize() + " bytes) from " + (senderPeer != null ? senderPeer.getDisplayName() : "peer"));
 
-        // Request approval
-        approvalHandler.requestApproval(metadata, senderPeer).thenAccept(accepted -> {
+        CompletableFuture<Boolean> approvalFuture = new CompletableFuture<>();
+        pendingInboundApprovals.put(metadata.transferId(), approvalFuture);
+
+        notifyStarted(transfer);
+
+        // Schedule timeout for inbound offer decision
+        Thread.ofVirtual().name("inbound-offer-timeout-" + metadata.transferId()).start(() -> {
+            try {
+                Thread.sleep(offerTimeoutMs);
+                CompletableFuture<Boolean> pending = pendingInboundApprovals.remove(metadata.transferId());
+                if (pending != null && !pending.isDone()) {
+                    Logger.info("[TRANSFER] Inbound offer timed out for transfer " + metadata.transferId());
+                    transfer.setErrorMessage("Offer timed out waiting for user approval");
+                    pending.complete(false);
+                }
+            } catch (InterruptedException ignored) {}
+        });
+
+        // If autoAccept is enabled, immediately complete approval
+        if (autoAccept) {
+            approvalFuture.complete(true);
+        } else if (approvalHandler != null) {
+            approvalHandler.requestApproval(metadata, senderPeer).thenAccept(res -> {
+                if (res != null) {
+                    approvalFuture.complete(res);
+                }
+            });
+        }
+
+        // Handle approval decision
+        approvalFuture.thenAccept(accepted -> {
+            pendingInboundApprovals.remove(metadata.transferId());
             if (accepted && running.get()) {
                 try {
                     FileReceiver receiver = new FileReceiver(metadata, downloadsDir, tempDir, transfer, recoveryManager, createListenerForwarder());
@@ -954,6 +1035,11 @@ public class FileTransferService {
                 future.completeExceptionally(new IOException("Service stopped"));
             }
             pendingResumeFutures.clear();
+
+            for (CompletableFuture<Boolean> future : pendingInboundApprovals.values()) {
+                future.complete(false);
+            }
+            pendingInboundApprovals.clear();
 
             transferManager.stop();
         }
