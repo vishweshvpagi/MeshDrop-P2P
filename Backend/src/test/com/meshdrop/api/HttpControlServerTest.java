@@ -10,6 +10,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import com.meshdrop.transfer.FileMetadata;
 import com.meshdrop.transfer.Transfer;
 import com.meshdrop.transfer.TransferDirection;
@@ -27,6 +28,8 @@ public class HttpControlServerTest {
         testTransferDetailAndCapabilities();
         testPeerConnectDisconnectEndpoints();
         testCorsHeaders();
+        testUploadTransferEndpoint();
+        testAcceptRejectEndpoints();
     }
 
     private Node createTestNode(Path tempDir) {
@@ -336,6 +339,122 @@ public class HttpControlServerTest {
             conn.setRequestMethod("POST");
             int connectStatus = conn.getResponseCode();
             assert connectStatus == 400 : "Expected 400 when connecting to unreachable peer, got " + connectStatus;
+        } finally {
+            server.stop();
+            node.stop();
+        }
+    }
+
+    public void testUploadTransferEndpoint() throws Exception {
+        Path tempDir = java.nio.file.Files.createTempDirectory("meshdrop-api-test-upload-");
+        Node node = createTestNode(tempDir);
+        node.start();
+
+        HttpControlServer server = new HttpControlServer(node, 0);
+        server.start();
+        int port = server.getPort();
+
+        try {
+            // 1. Missing peerId or fileName -> 400
+            URI uriNoParams = URI.create("http://127.0.0.1:" + port + "/api/transfers/upload");
+            HttpURLConnection conn = (HttpURLConnection) uriNoParams.toURL().openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.getOutputStream().write("payload data".getBytes(StandardCharsets.UTF_8));
+            assert conn.getResponseCode() == 400 : "Expected 400 for missing peerId/fileName";
+
+            // 2. Unknown peer -> 404
+            UUID unknownPeerId = UUID.randomUUID();
+            URI uriUnknownPeer = URI.create("http://127.0.0.1:" + port + "/api/transfers/upload?peerId=" + unknownPeerId + "&fileName=test.bin");
+            HttpURLConnection connUnknown = (HttpURLConnection) uriUnknownPeer.toURL().openConnection();
+            connUnknown.setRequestMethod("POST");
+            connUnknown.setDoOutput(true);
+            connUnknown.getOutputStream().write("test bytes".getBytes(StandardCharsets.UTF_8));
+            int unknownCode = connUnknown.getResponseCode();
+            assert unknownCode == 404 : "Expected 404 for unknown peer, got " + unknownCode;
+
+            // 3. Disconnected peer -> 400
+            NodeIdentity discIdentity = NodeIdentity.createRandom("DiscPeer");
+            node.getPeerManager().registerDiscovered(discIdentity, new com.meshdrop.peer.PeerAddress("127.0.0.1", 59998));
+            UUID discPeerId = discIdentity.nodeId();
+
+            URI uriDiscPeer = URI.create("http://127.0.0.1:" + port + "/api/transfers/upload?peerId=" + discPeerId + "&fileName=test.bin");
+            conn = (HttpURLConnection) uriDiscPeer.toURL().openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.getOutputStream().write("test bytes".getBytes(StandardCharsets.UTF_8));
+            int discCode = conn.getResponseCode();
+            assert discCode == 400 : "Expected 400 for disconnected peer, got " + discCode;
+        } finally {
+            server.stop();
+            node.stop();
+        }
+    }
+
+    public void testAcceptRejectEndpoints() throws Exception {
+        Path tempDir = java.nio.file.Files.createTempDirectory("meshdrop-api-test-accept-reject-");
+        Node node = createTestNode(tempDir);
+        node.start();
+
+        HttpControlServer server = new HttpControlServer(node, 0);
+        server.start();
+        int port = server.getPort();
+
+        try {
+            UUID unknownId = UUID.randomUUID();
+
+            // 1. Accept unknown transfer -> 404
+            URI acceptUri = URI.create("http://127.0.0.1:" + port + "/api/transfers/" + unknownId + "/accept");
+            HttpURLConnection conn = (HttpURLConnection) acceptUri.toURL().openConnection();
+            conn.setRequestMethod("POST");
+            assert conn.getResponseCode() == 404 : "Expected 404 for unknown transfer accept";
+
+            // 2. Reject unknown transfer -> 404
+            URI rejectUri = URI.create("http://127.0.0.1:" + port + "/api/transfers/" + unknownId + "/reject");
+            conn = (HttpURLConnection) rejectUri.toURL().openConnection();
+            conn.setRequestMethod("POST");
+            assert conn.getResponseCode() == 404 : "Expected 404 for unknown transfer reject";
+
+            // 3. Register an outgoing transfer (not WAITING_FOR_ACCEPT) -> accept should return 400
+            UUID tid = UUID.randomUUID();
+            UUID sid = UUID.randomUUID();
+            UUID rid = UUID.randomUUID();
+            FileMetadata meta = new FileMetadata(tid, sid, rid, "outgoing.iso", 1000L, System.currentTimeMillis(), "0".repeat(64));
+            Transfer outgoingTransfer = new Transfer(meta, TransferDirection.UPLOAD, null, TransferState.TRANSFERRING);
+            node.getFileTransferService().getTransferManager().registerTransfer(outgoingTransfer);
+
+            conn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + tid + "/accept").toURL().openConnection();
+            conn.setRequestMethod("POST");
+            assert conn.getResponseCode() == 400 : "Expected 400 when accepting an outgoing transfer";
+
+            // 4. Register a download transfer in WAITING_FOR_ACCEPT -> accept should return 200
+            UUID inTid = UUID.randomUUID();
+            FileMetadata inMeta = new FileMetadata(inTid, sid, rid, "incoming.iso", 1000L, System.currentTimeMillis(), "0".repeat(64));
+            Transfer incomingTransfer = new Transfer(inMeta, TransferDirection.DOWNLOAD, null, TransferState.WAITING_FOR_ACCEPT);
+            node.getFileTransferService().getTransferManager().registerTransfer(incomingTransfer);
+            CompletableFuture<Boolean> acceptFuture = new CompletableFuture<>();
+            node.getFileTransferService().registerPendingApproval(inTid, acceptFuture);
+
+            conn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + inTid + "/accept").toURL().openConnection();
+            conn.setRequestMethod("POST");
+            assert conn.getResponseCode() == 200 : "Expected 200 when accepting WAITING_FOR_ACCEPT transfer";
+            assert acceptFuture.getNow(false) : "acceptFuture must be completed true";
+
+            // 5. Register another download transfer in WAITING_FOR_ACCEPT -> reject should return 200
+            UUID rejTid = UUID.randomUUID();
+            FileMetadata rejMeta = new FileMetadata(rejTid, sid, rid, "reject.iso", 1000L, System.currentTimeMillis(), "0".repeat(64));
+            Transfer rejTransfer = new Transfer(rejMeta, TransferDirection.DOWNLOAD, null, TransferState.WAITING_FOR_ACCEPT);
+            node.getFileTransferService().getTransferManager().registerTransfer(rejTransfer);
+            CompletableFuture<Boolean> rejectFuture = new CompletableFuture<>();
+            node.getFileTransferService().registerPendingApproval(rejTid, rejectFuture);
+
+            conn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + rejTid + "/reject").toURL().openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.getOutputStream().write("{\"reason\":\"test decline\"}".getBytes(StandardCharsets.UTF_8));
+            assert conn.getResponseCode() == 200 : "Expected 200 when rejecting WAITING_FOR_ACCEPT transfer";
+            assert !rejectFuture.getNow(true) : "rejectFuture must be completed false";
+            assert rejTransfer.getState() == TransferState.REJECTED : "Transfer state should be REJECTED";
         } finally {
             server.stop();
             node.stop();

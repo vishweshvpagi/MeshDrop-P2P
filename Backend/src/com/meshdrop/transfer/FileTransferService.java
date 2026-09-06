@@ -109,6 +109,9 @@ public class FileTransferService {
             Transfer transfer = transferManager.getTransfer(transferId).orElse(null);
             if (transfer != null) {
                 transfer.setErrorMessage(reason != null ? reason : "Declined by user");
+                try {
+                    transfer.transitionTo(TransferState.REJECTED);
+                } catch (Exception ignored) {}
             }
             return future.complete(false);
         }
@@ -117,6 +120,12 @@ public class FileTransferService {
 
     public boolean isPendingApproval(UUID transferId) {
         return transferId != null && pendingInboundApprovals.containsKey(transferId);
+    }
+
+    public void registerPendingApproval(UUID transferId, CompletableFuture<Boolean> future) {
+        if (transferId != null && future != null) {
+            pendingInboundApprovals.put(transferId, future);
+        }
     }
 
     public List<Transfer> getPendingTransfers() {

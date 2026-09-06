@@ -24,7 +24,7 @@ export interface UseTransfersResult {
   lastUpdated: Date | null;
   isStale: boolean;
   refresh: () => Promise<void>;
-  startTransfer: (peerId: string, filePath: string) => Promise<{ success: boolean; transferId?: string; error?: string }>;
+  startTransfer: (peerId: string, fileOrPath: File | string) => Promise<{ success: boolean; transferId?: string; error?: string }>;
   acceptTransfer: (transferId: string) => Promise<Transfer>;
   rejectTransfer: (transferId: string, reason?: string) => Promise<{ success: boolean; transferId?: string; error?: string }>;
   resumeTransfer: (transferId: string) => Promise<{ success: boolean; transferId?: string; state?: string; error?: string }>;
@@ -89,8 +89,13 @@ export function useTransfers(basePollIntervalMs: number = 1500): UseTransfersRes
   }, []);
 
   const startTransfer = useCallback(
-    async (peerId: string, filePath: string) => {
-      const result = await meshDropApi.startTransfer(peerId, filePath);
+    async (peerId: string, fileOrPath: File | string) => {
+      let result;
+      if (typeof fileOrPath === 'string') {
+        result = await meshDropApi.startTransfer(peerId, fileOrPath);
+      } else {
+        result = await meshDropApi.uploadAndStartTransfer(peerId, fileOrPath);
+      }
       await fetchTransfers();
       return result;
     },

@@ -35,9 +35,15 @@ export interface MeshDropApi {
   getTransfer(transferId: string): Promise<Transfer>;
 
   /**
-   * Initiates an outgoing file transfer to a connected peer.
+   * Initiates an outgoing file transfer to a connected peer from a local disk path.
    */
   startTransfer(peerId: string, filePath: string): Promise<{ success: boolean; transferId?: string; fileName?: string; fileSize?: number; state?: string; error?: string }>;
+
+  /**
+   * Streams a browser File directly to the local backend without whole-file memory buffering,
+   * then initiates the MeshDrop transfer engine.
+   */
+  uploadAndStartTransfer(peerId: string, file: File): Promise<{ success: boolean; transferId?: string; fileName?: string; fileSize?: number; state?: string; error?: string }>;
 
   /**
    * Resumes an interrupted or paused transfer.
@@ -131,6 +137,37 @@ export class LiveMeshDropService implements MeshDropApi {
 
   async startTransfer(peerId: string, filePath: string): Promise<{ success: boolean; transferId?: string; fileName?: string; fileSize?: number; state?: string; error?: string }> {
     return apiClient.post('/api/transfers', { peerId, filePath }, 30_000);
+  }
+
+  async uploadAndStartTransfer(peerId: string, file: File): Promise<{ success: boolean; transferId?: string; fileName?: string; fileSize?: number; state?: string; error?: string }> {
+    const url = `${apiClient.getBaseUrl()}/api/transfers/upload?peerId=${encodeURIComponent(peerId)}&fileName=${encodeURIComponent(file.name)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Peer-Id': peerId,
+          'X-File-Name': encodeURIComponent(file.name),
+        },
+        body: file, // Streams the File Blob directly without calling file.arrayBuffer()
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!response.ok) {
+        let msg = `Upload failed with status ${response.status}`;
+        try {
+          const err = await response.json();
+          if (err?.error) msg = err.error;
+        } catch {}
+        throw new Error(msg);
+      }
+      return response.json();
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      throw err;
+    }
   }
 
   async resumeTransfer(transferId: string): Promise<{ success: boolean; transferId?: string; state?: string; error?: string }> {

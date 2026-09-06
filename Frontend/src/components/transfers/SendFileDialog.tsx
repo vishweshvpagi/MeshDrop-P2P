@@ -11,7 +11,7 @@ export interface SendFileDialogProps {
   onClose: () => void;
   peers: Peer[];
   defaultPeerId?: string;
-  onSend: (peerId: string, filePath: string) => Promise<void>;
+  onSend: (peerId: string, fileOrPath: File | string) => Promise<void>;
 }
 
 export const SendFileDialog: React.FC<SendFileDialogProps> = ({
@@ -21,6 +21,7 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
   defaultPeerId,
   onSend,
 }) => {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileMeta, setSelectedFileMeta] = useState<{
     name: string;
     size: number;
@@ -66,23 +67,20 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
   const handleFilePickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Memory safe: extract only metadata, DO NOT read file bytes into memory!
+      // Memory safe: hold the File handle directly for streaming upload; DO NOT read into memory!
+      setSelectedFile(file);
       setSelectedFileMeta({
         name: file.name,
         size: file.size,
         type: file.type || 'application/octet-stream',
       });
-      // Suggest a path based on file name or data folder
-      if (!filePath || filePath.endsWith('\\') || filePath.endsWith('/')) {
-        setFilePath(`data\\${file.name}`);
-      } else {
-        setFilePath(file.name);
-      }
+      setFilePath('');
       setErrorMessage(null);
     }
   };
 
   const handleApplyPreset = (presetPath: string, presetName: string, presetSize: number) => {
+    setSelectedFile(null);
     setSelectedFileMeta({
       name: presetName,
       size: presetSize,
@@ -92,13 +90,13 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
     setErrorMessage(null);
   };
 
-
   const handleNativeBrowse = async () => {
     setIsOpeningNativePicker(true);
     setErrorMessage(null);
     try {
       const res = await meshDropApi.openFileDialog();
       if (res.selected && res.filePath) {
+        setSelectedFile(null);
         setFilePath(res.filePath);
         setSelectedFileMeta({
           name: res.fileName || res.filePath.split('\\').pop()?.split('/').pop() || 'file',
@@ -122,16 +120,21 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
       setErrorMessage('Please select a connected recipient peer.');
       return;
     }
-    if (!filePath.trim()) {
-      setErrorMessage('Please specify a local file path on disk.');
+    if (!selectedFile && !filePath.trim()) {
+      setErrorMessage('Please select a file or specify a local file path on disk.');
       return;
     }
 
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      await onSend(selectedPeerId, filePath.trim());
+      if (selectedFile) {
+        await onSend(selectedPeerId, selectedFile);
+      } else {
+        await onSend(selectedPeerId, filePath.trim());
+      }
       // Reset and close on success
+      setSelectedFile(null);
       setSelectedFileMeta(null);
       setFilePath('');
       onClose();
@@ -236,13 +239,13 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
                       {selectedFileMeta.name}
                     </span>
                     <span className="selected-file-subtext">
-                      {formatBytes(selectedFileMeta.size)} &bull; {selectedFileMeta.type}
+                      {formatBytes(selectedFileMeta.size)} &bull; {selectedFile ? 'Browser Stream Ready' : (selectedFileMeta.type || 'Disk Path')}
                     </span>
                   </div>
                 </div>
               ) : (
                 <div className="file-picker-placeholder">
-                  No file chosen yet. Click &quot;Browse Local Files&quot; or enter a path below.
+                  No file chosen yet. Click &quot;Browse Local Files...&quot; or enter a path below.
                 </div>
               )}
 
@@ -254,14 +257,21 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
                   id="file-path-input"
                   type="text"
                   className="dialog-text-input"
-                  placeholder="e.g. data\test500mb.dat or C:\path\to\file.ext"
+                  placeholder={selectedFile ? `Using selected file: ${selectedFile.name}` : "e.g. data\\test500mb.dat or C:\\path\\to\\file.ext"}
                   value={filePath}
-                  onChange={(e) => setFilePath(e.target.value)}
+                  onChange={(e) => {
+                    setFilePath(e.target.value);
+                    if (e.target.value.trim()) {
+                      setSelectedFile(null);
+                    }
+                  }}
                   disabled={isSubmitting}
-                  required
+                  required={!selectedFile}
                 />
                 <span className="input-hint">
-                  The Java engine streams directly from disk. For files outside the project directory, enter the full path (e.g. {selectedFileMeta ? <code>D:\{selectedFileMeta.name}</code> : <code>D:\file.ext</code>}).
+                  {selectedFile
+                    ? 'Selected file will be streamed directly to the peer via the local backend.'
+                    : 'The Java engine streams directly from disk. Enter full path or select a file above.'}
                 </span>
               </div>
             </div>
@@ -352,7 +362,7 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
               type="submit"
               variant="primary"
               size="sm"
-              disabled={isSubmitting || connectedPeers.length === 0 || !filePath.trim()}
+              disabled={isSubmitting || connectedPeers.length === 0 || (!selectedFile && !filePath.trim())}
             >
               {isSubmitting ? 'Starting Transfer...' : 'Send File'}
             </Button>

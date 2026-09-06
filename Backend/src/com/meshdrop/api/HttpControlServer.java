@@ -25,6 +25,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -113,7 +114,7 @@ public class HttpControlServer implements AutoCloseable {
             exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "http://localhost:3000");
         }
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Accept");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Peer-Id, X-File-Name, Authorization");
         exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
 
         if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -486,6 +487,16 @@ public class HttpControlServer implements AutoCloseable {
                     return;
                 }
 
+                // Check for /api/transfers/upload
+                if (segments.length == 1 && "upload".equalsIgnoreCase(segments[0])) {
+                    if ("POST".equals(method)) {
+                        handleUploadAndStartTransfer(exchange);
+                    } else {
+                        sendJsonResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
+                    }
+                    return;
+                }
+
                 UUID transferId;
                 try {
                     transferId = UUID.fromString(segments[0]);
@@ -730,12 +741,20 @@ public class HttpControlServer implements AutoCloseable {
         }
 
         private void handleAcceptTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
+            if (transfer.getDirection() != TransferDirection.DOWNLOAD) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Only incoming transfers can be accepted\"}");
+                return;
+            }
+            if (transfer.getState() != TransferState.WAITING_FOR_ACCEPT) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer is in state " + transfer.getState() + ", expected WAITING_FOR_ACCEPT\"}");
+                return;
+            }
             try {
                 boolean accepted = node.acceptTransfer(transfer.getTransferId());
                 if (accepted) {
                     sendJsonResponse(exchange, 200, JsonUtils.toJson(transferToMap(transfer)));
                 } else {
-                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer could not be accepted (may not be waiting for accept or expired)\"}");
+                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer could not be accepted (approval future expired or not found)\"}");
                 }
             } catch (Exception e) {
                 sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
@@ -743,6 +762,14 @@ public class HttpControlServer implements AutoCloseable {
         }
 
         private void handleRejectTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
+            if (transfer.getDirection() != TransferDirection.DOWNLOAD) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Only incoming transfers can be rejected\"}");
+                return;
+            }
+            if (transfer.getState() != TransferState.WAITING_FOR_ACCEPT) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer is in state " + transfer.getState() + ", expected WAITING_FOR_ACCEPT\"}");
+                return;
+            }
             String body = "";
             try (InputStream is = exchange.getRequestBody()) {
                 body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
@@ -756,11 +783,119 @@ public class HttpControlServer implements AutoCloseable {
                 if (rejected) {
                     sendJsonResponse(exchange, 200, "{\"success\":true,\"transferId\":\"" + transfer.getTransferId() + "\"}");
                 } else {
-                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer could not be rejected (may not be waiting for accept or expired)\"}");
+                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer could not be rejected (approval future expired or not found)\"}");
                 }
             } catch (Exception e) {
                 sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
             }
+        }
+
+        private void handleUploadAndStartTransfer(HttpExchange exchange) throws IOException {
+            String query = exchange.getRequestURI().getRawQuery();
+            Map<String, String> queryParams = parseQueryParams(query);
+
+            String peerIdStr = queryParams.get("peerId");
+            if (peerIdStr == null || peerIdStr.isBlank()) {
+                peerIdStr = exchange.getRequestHeaders().getFirst("X-Peer-Id");
+            }
+
+            String fileName = queryParams.get("fileName");
+            if (fileName == null || fileName.isBlank()) {
+                fileName = exchange.getRequestHeaders().getFirst("X-File-Name");
+            }
+
+            if (fileName != null) {
+                try {
+                    fileName = java.net.URLDecoder.decode(fileName, StandardCharsets.UTF_8);
+                } catch (Exception ignored) {}
+            }
+
+            if (peerIdStr == null || peerIdStr.isBlank()) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"peerId parameter is required\"}");
+                return;
+            }
+
+            UUID peerId;
+            try {
+                peerId = UUID.fromString(peerIdStr);
+            } catch (IllegalArgumentException e) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Invalid peer UUID: " + peerIdStr + "\"}");
+                return;
+            }
+
+            if (node.getPeerManager() == null) {
+                sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"PeerManager not initialized\"}");
+                return;
+            }
+
+            var peerOpt = node.getPeerManager().findPeer(peerId);
+            if (peerOpt.isEmpty()) {
+                sendJsonResponse(exchange, 404, "{\"success\":false,\"error\":\"Peer not found: " + peerId + "\"}");
+                return;
+            }
+
+            Peer peer = peerOpt.get();
+            if (!peer.isConnected()) {
+                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Peer " + peer.getDisplayName() + " is not connected\"}");
+                return;
+            }
+
+            // Sanitize file name to prevent path traversal
+            String safeFileName = (fileName != null && !fileName.isBlank())
+                    ? Path.of(fileName).getFileName().toString()
+                    : "upload_" + System.currentTimeMillis() + ".dat";
+            if (safeFileName.isBlank() || safeFileName.contains("..")) {
+                safeFileName = "upload_" + System.currentTimeMillis() + ".dat";
+            }
+
+            // Stage uploaded stream into a dedicated temporary folder on disk with bounded memory (64KB buffer)
+            Path uploadsDir = node.getConfig().tempDir().resolve("uploads").resolve(UUID.randomUUID().toString());
+            Files.createDirectories(uploadsDir);
+            Path stagedFile = uploadsDir.resolve(safeFileName);
+
+            try (InputStream in = exchange.getRequestBody();
+                 OutputStream out = Files.newOutputStream(stagedFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                byte[] buf = new byte[64 * 1024];
+                int read;
+                while ((read = in.read(buf)) != -1) {
+                    out.write(buf, 0, read);
+                }
+            } catch (IOException e) {
+                try { Files.deleteIfExists(stagedFile); } catch (Exception ignored) {}
+                sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"Failed to stage upload: " + e.getMessage() + "\"}");
+                return;
+            }
+
+            try {
+                Transfer transfer = node.startFileTransfer(peerId, stagedFile);
+                Map<String, Object> res = transferToMap(transfer);
+                res.put("success", true);
+                sendJsonResponse(exchange, 200, JsonUtils.toJson(res));
+            } catch (Exception e) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("success", false);
+                err.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                sendJsonResponse(exchange, 500, JsonUtils.toJson(err));
+            }
+        }
+
+        private Map<String, String> parseQueryParams(String query) {
+            Map<String, String> map = new LinkedHashMap<>();
+            if (query == null || query.isBlank()) return map;
+            String[] pairs = query.split("&");
+            for (String pair : pairs) {
+                int idx = pair.indexOf('=');
+                if (idx > 0) {
+                    String key = pair.substring(0, idx);
+                    String val = pair.substring(idx + 1);
+                    try {
+                        key = java.net.URLDecoder.decode(key, StandardCharsets.UTF_8);
+                        val = java.net.URLDecoder.decode(val, StandardCharsets.UTF_8);
+                    } catch (Exception ignored) {}
+                    map.put(key, val);
+                }
+            }
+            return map;
         }
 
         private void handleLegacyCancel(HttpExchange exchange) throws IOException {
