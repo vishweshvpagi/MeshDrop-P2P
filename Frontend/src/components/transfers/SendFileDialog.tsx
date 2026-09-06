@@ -92,6 +92,7 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
     setErrorMessage(null);
   };
 
+
   const handleNativeBrowse = async () => {
     setIsOpeningNativePicker(true);
     setErrorMessage(null);
@@ -205,7 +206,7 @@ export const SendFileDialog: React.FC<SendFileDialogProps> = ({
                   Browse Local Files...
                 </Button>
 
-                {/* Quick preset for demo / verification */}
+                {/* Quick preset for verification / testing */}
                 <button
                   type="button"
                   className="quick-preset-btn"

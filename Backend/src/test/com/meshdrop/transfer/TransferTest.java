@@ -12,19 +12,18 @@ public class TransferTest {
     }
 
     private void testTransferProgress() {
-        TransferMetadata metadata = new TransferMetadata(
+        FileMetadata metadata = new FileMetadata(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
                 UUID.randomUUID(),
                 "test.iso",
                 1000L,
-                100,
-                10,
-                "dummyhash",
-                UUID.randomUUID(),
-                UUID.randomUUID()
+                System.currentTimeMillis(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         );
 
-        Transfer transfer = new Transfer(metadata);
-        assert transfer.getStatus() == TransferStatus.QUEUED : "Initial status should be QUEUED";
+        Transfer transfer = new Transfer(metadata, TransferDirection.UPLOAD, null);
+        assert transfer.getState() == TransferState.OFFERING : "Initial state should be OFFERING";
         assert transfer.getBytesTransferred() == 0 : "Initial bytes should be 0";
 
         transfer.addBytesTransferred(500L);

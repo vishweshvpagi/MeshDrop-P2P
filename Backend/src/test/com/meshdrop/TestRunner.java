@@ -28,7 +28,6 @@ import com.meshdrop.peer.PeerTest;
 import com.meshdrop.protocol.HandshakeTest;
 import com.meshdrop.protocol.PacketDecoderTest;
 import com.meshdrop.protocol.PacketEncoderTest;
-import com.meshdrop.transfer.ChunkManagerTest;
 import com.meshdrop.transfer.HashUtilsTest;
 import com.meshdrop.transfer.TransferTest;
 import com.meshdrop.integration.TwoNodeFileTransferTest;
@@ -212,10 +211,6 @@ public class TestRunner {
         allTests.add(new TestCase() {
             public String name() { return "TwoNodeMessagingTest"; }
             public void run() throws Exception { new TwoNodeMessagingTest().runAll(); }
-        });
-        allTests.add(new TestCase() {
-            public String name() { return "ChunkManagerTest"; }
-            public void run() throws Exception { new ChunkManagerTest().runAll(); }
         });
         allTests.add(new TestCase() {
             public String name() { return "HashUtilsTest"; }

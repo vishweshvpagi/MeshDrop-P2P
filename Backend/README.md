@@ -293,7 +293,6 @@ MeshDrop includes a standalone, zero-dependency test runner executing **80 disti
 [RUN]  NodeCliIntegrationTest .... PASSED
 [RUN]  CliConcurrencyTest ........ PASSED
 [RUN]  HashUtilsTest ............. PASSED
-[RUN]  ChunkManagerTest .......... PASSED
 [RUN]  TransferTest .............. PASSED
 [RUN]  FileMetadataTest .......... PASSED
 [RUN]  FileChunkTest ............. PASSED

@@ -1,4 +1,4 @@
-﻿# MeshDrop
+# MeshDrop
 
 > **A decentralized peer-to-peer (P2P) LAN messaging and high-speed file transfer system with zero external backend dependencies and a modern desktop control panel.**
 
@@ -90,24 +90,22 @@ The launcher automatically:
 ```text
 meshdropProject/
 │
-├── backend/                        # Java 26 Networking Engine
+├── Backend/                        # Java 26 Networking Engine (zero dependencies)
 │   ├── src/com/meshdrop/           # Core Java source files
 │   │   ├── api/                    # HTTP Control Server & JSON utils
 │   │   ├── cli/                    # Interactive command line interface
 │   │   ├── core/                   # Node lifecycle and configuration
 │   │   ├── discovery/              # UDP Multicast peer discovery
-│   │   ├── network/                # TCP Server, ConnectionManager, and sockets
-│   │   ├── peer/                   # Peer state models and deduplication
-│   │   ├── protocol/               # Binary packet framing and wire codecs
+│   │   ├── network/                # TCP Server, ConnectionManager, sockets
+│   │   ├── peer/                   # Peer models and lifecycle
+│   │   ├── protocol/               # 28-byte packet framing and codecs
 │   │   ├── security/               # Ed25519 cryptography and trust store
-│   │   ├── storage/                # StorageManager and directory sandboxing
+│   │   ├── storage/                # StorageManager and directory isolation
 │   │   └── transfer/               # Chunk streaming, checkpoints, and resume
-│   ├── docs/                       # Architecture, API, and protocol documentation
 │   ├── scripts/                    # Automation scripts (build, test, run, demo)
-│   ├── data/                       # Local identity and demo fixtures
-│   └── storage/                    # Received downloads and transfer staging
+│   └── out/                        # Compiled class bytecode
 │
-├── frontend/                       # React 18 + Vite Control Panel
+├── Frontend/                       # React 18 + Vite Control Panel
 │   ├── src/
 │   │   ├── components/             # UI components (Transfers, Peers, Dialogs)
 │   │   ├── context/                # Global contexts (Toast, Theme)
@@ -115,10 +113,14 @@ meshdropProject/
 │   │   ├── pages/                  # Dashboard, Peers, Transfers pages
 │   │   ├── services/               # HTTP API client for backend engine
 │   │   └── types/                  # TypeScript interfaces and models
-│   ├── public/                     # Static assets and icons
 │   ├── package.json
-│   ├── tsconfig.json
 │   └── vite.config.ts
+│
+├── docs/                           # Architecture, Protocol, and Transfer Specs
+│   ├── architecture.md             # Subsystems, concurrency, and component hierarchy
+│   ├── protocol.md                 # 28-byte framing, wire types, and UDP discovery
+│   ├── file-transfer.md            # Chunking, lifecycle, resume, and SHA-256
+│   └── frontend-api.md             # HTTP Control Server REST endpoints
 │
 ├── start-meshdrop.ps1              # Unified single-command launcher
 ├── start-meshdrop.bat              # Windows batch launcher shortcut
@@ -142,19 +144,19 @@ meshdropProject/
 
 1. **Compile Backend**:
    ```powershell
-   cd backend
+   cd Backend
    powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
    ```
 
 2. **Run Backend Test Suite**:
    ```powershell
-   cd backend
+   cd Backend
    powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
    ```
 
 3. **Start Backend Manually (with interactive CLI)**:
    ```powershell
-   cd backend
+   cd Backend
    java -cp out com.meshdrop.Main --name DevNode --tcp-port 5000 --udp-port 5001 --api-port 8080
    ```
 
@@ -162,25 +164,25 @@ meshdropProject/
 
 1. **Install Dependencies**:
    ```powershell
-   cd frontend
+   cd Frontend
    npm install
    ```
 
 2. **Run Frontend Tests**:
    ```powershell
-   cd frontend
+   cd Frontend
    npm test
    ```
 
 3. **Build Frontend for Production**:
    ```powershell
-   cd frontend
+   cd Frontend
    npm run build
    ```
 
 4. **Start Vite Dev Server**:
    ```powershell
-   cd frontend
+   cd Frontend
    npm run dev
    ```
 
@@ -192,13 +194,13 @@ To verify two distinct nodes discovering each other and exchanging files locally
 
 1. **Terminal 1 (Alice)**:
    ```powershell
-   cd backend
+   cd Backend
    java -cp out com.meshdrop.Main --name Alice --tcp-port 5001 --udp-port 5002 --api-port 8081
    ```
 
 2. **Terminal 2 (Bob)**:
    ```powershell
-   cd backend
+   cd Backend
    java -cp out com.meshdrop.Main --name Bob --tcp-port 5003 --udp-port 5002 --api-port 8082
    ```
 

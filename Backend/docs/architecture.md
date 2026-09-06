@@ -117,7 +117,7 @@ graph TD
 - **`FileTransferService`**: High-level coordinator managing inbound and outbound file transfers. Translates application offers, chunk streaming, resume negotiation, and hash verification into binary wire packets.
 - **`TransferManager`**: In-memory registry tracking all active, completed, resumable, and failed `Transfer` instances. Emits lifecycle events to `TransferListener` subscribers.
 - **`Transfer`**: Observable transfer model tracking transfer ID, direction (`OUTBOUND` / `INBOUND`), peer ID, file metadata, byte progression, progress percentages, and states.
-- **`ChunkManager`**: Manages fixed-size chunk partitioning (default 64 KiB), random access I/O, partial file writing, and rolling digest calculations.
+- **`FileSender` & `FileReceiver`**: Manage streaming `FileChannel` I/O, fixed-size chunk partitioning (default 64 KiB), partial `.part` file staging, and rolling SHA-256 digest calculations.
 - **`TransferCheckpoint`**: Metadata tracking persisted bytes and chunk progress for resumable transfers. Persisted to disk atomically via `.meta` companion files.
 - **`ResumeManager`**: Orchestrates resume offer evaluation, file size/hash verification, receiver-authoritative chunk boundary alignment, and upload seek resumption.
 

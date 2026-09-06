@@ -132,7 +132,7 @@ export class ApiClient {
       }
     }
     this.baseUrl = resolvedUrl || (import.meta.env?.VITE_MESHDROP_API_URL as string) || 'http://localhost:8080';
-    this.timeoutMillis = config.timeoutMillis || 4000;
+    this.timeoutMillis = config.timeoutMillis || 8000;
   }
 
   public getBaseUrl(): string {
@@ -161,10 +161,11 @@ export class ApiClient {
   /**
    * Dispatches an HTTP request with automatic JSON handling and timeout guards.
    */
-  public async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  public async request<T>(path: string, options: RequestInit & { timeoutMillis?: number } = {}): Promise<T> {
     const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMillis);
+    const timeout = options.timeoutMillis ?? this.timeoutMillis;
+    const timer = setTimeout(() => controller.abort(), timeout);
 
     const headers = new Headers(options.headers || {});
     if (!headers.has('Accept')) {
@@ -221,10 +222,11 @@ export class ApiClient {
     return this.request<T>(path, { method: 'GET' });
   }
 
-  public post<T>(path: string, body?: unknown): Promise<T> {
+  public post<T>(path: string, body?: unknown, timeoutMillis?: number): Promise<T> {
     return this.request<T>(path, {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
+      timeoutMillis,
     });
   }
 

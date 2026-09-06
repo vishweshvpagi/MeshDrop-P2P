@@ -169,14 +169,6 @@ public class FileReceiver implements AutoCloseable {
         this.digest = null;
     }
 
-    /**
-     * Backwards-compatible handleChunk for Phase 0 legacy interface.
-     */
-    public void handleChunk(Chunk chunk, byte[] data) throws IOException {
-        if (channel != null && channel.isOpen() && data != null) {
-            channel.write(ByteBuffer.wrap(data));
-        }
-    }
 
     public record ReceiverDebugInfo(
             int expectedChunkIndex,

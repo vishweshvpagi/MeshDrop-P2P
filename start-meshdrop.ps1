@@ -14,6 +14,7 @@
 param(
     [switch]$Production,
     [switch]$NoBrowser,
+    [string]$NodeName = "",
     [int]$BackendPort = 8080,
     [int]$TcpPort = 5000,
     [int]$UdpPort = 5001,
@@ -292,10 +293,11 @@ function Stop-LauncherChildren {
 Write-Host "`n[2/4] Starting MeshDrop backend..." -ForegroundColor Yellow
 
 if (-not $backendAlreadyRunning) {
+    $effectiveName = if ($NodeName) { $NodeName } else { "$($env:COMPUTERNAME)-$BackendPort" }
     $javaArgs = @(
         "-cp", "out",
         "com.meshdrop.Main",
-        "--name", "PC-Local",
+        "--name", "$effectiveName",
         "--tcp-port", "$TcpPort",
         "--udp-port", "$UdpPort",
         "--api-port", "$BackendPort",

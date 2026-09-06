@@ -15,7 +15,7 @@ This script compiles all sources under `src/com` and `src/test`, then executes `
 - **`PacketEncoderTest` / `PacketDecoderTest`**: Unit tests verifying binary encoding, boundary framing, fragmentation, and corrupted packets.
 - **`TcpServerTest` / `TcpConnectionTest`**: Verifies socket binding, connection handshakes, and concurrent I/O.
 - **`PeerManagerTest`**: Verifies peer registration, deduplication, and status transitions.
-- **`ChunkManagerTest` / `HashUtilsTest` / `TransferTest`**: Verifies chunk calculation, partial chunks, SHA-256 streaming verification, and resume logic.
+- **`FileChunkTest` / `HashUtilsTest` / `TransferTest`**: Verifies chunk calculation, partial chunks, SHA-256 streaming verification, and resume logic.
 
 ---
 

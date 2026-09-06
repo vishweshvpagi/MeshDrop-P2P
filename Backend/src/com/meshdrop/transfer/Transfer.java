@@ -18,11 +18,9 @@ public class Transfer {
     private volatile long lastProgressUpdateMs = 0;
 
     private final UUID transferId;
-    private final FileMetadata metadata;
-    private final TransferMetadata legacyMetadata;
+    private volatile FileMetadata metadata;
     private final TransferDirection direction;
     private volatile TransferState state;
-    private volatile TransferStatus status; // Backwards compatibility with Phase 0
     private volatile long bytesTransferred;
     private volatile int chunksTransferred;
     private final long totalBytes;
@@ -39,11 +37,9 @@ public class Transfer {
         this.localPath = localPath;
         this.totalBytes = metadata.fileSize();
         this.state = Objects.requireNonNull(initialState, "initialState must not be null");
-        this.status = TransferStatus.QUEUED;
         this.bytesTransferred = 0;
         this.chunksTransferred = 0;
         this.startTimeMs = System.currentTimeMillis();
-        this.legacyMetadata = null;
     }
 
     public Transfer(FileMetadata metadata, TransferDirection direction, Path localPath) {
@@ -51,19 +47,28 @@ public class Transfer {
     }
 
     /**
-     * Backwards-compatible constructor for Phase 0 legacy tests.
+     * Creates an OFFERING-state Transfer for an outgoing file before SHA-256 is computed.
+     * FileMetadata will be set asynchronously via {@link #setFileMetadata(FileMetadata)}
+     * once hashing completes.
      */
-    public Transfer(TransferMetadata legacyMetadata) {
-        this.legacyMetadata = Objects.requireNonNull(legacyMetadata, "legacyMetadata must not be null");
-        this.transferId = legacyMetadata.transferId();
+    public static Transfer createOffering(UUID transferId, String fileName, long fileSize,
+                                          UUID recipientId, UUID senderId, Path localPath) {
+        Objects.requireNonNull(transferId, "transferId must not be null");
+        return new Transfer(transferId, fileName, fileSize, recipientId, senderId, localPath);
+    }
+
+    /** Private constructor for createOffering — allows metadata to be null initially. */
+    private Transfer(UUID transferId, String fileName, long fileSize,
+                     UUID recipientId, UUID senderId, Path localPath) {
+        this.transferId = Objects.requireNonNull(transferId, "transferId must not be null");
+        this.metadata = null; // will be set once SHA-256 is computed
         this.direction = TransferDirection.UPLOAD;
-        this.totalBytes = legacyMetadata.fileSize();
+        this.localPath = localPath;
+        this.totalBytes = fileSize;
         this.state = TransferState.OFFERING;
-        this.status = TransferStatus.QUEUED;
         this.bytesTransferred = 0;
         this.chunksTransferred = 0;
         this.startTimeMs = System.currentTimeMillis();
-        this.metadata = null;
     }
 
     public UUID getTransferId() {
@@ -74,18 +79,12 @@ public class Transfer {
         return metadata;
     }
 
-    public TransferMetadata getMetadata() {
-        return legacyMetadata != null ? legacyMetadata :
-                new TransferMetadata(
-                        metadata.transferId(),
-                        metadata.fileName(),
-                        metadata.fileSize(),
-                        64 * 1024,
-                        (int) Math.ceil((double) metadata.fileSize() / (64 * 1024)),
-                        metadata.sha256(),
-                        metadata.senderId(),
-                        metadata.recipientId()
-                );
+    /**
+     * Sets the file metadata once SHA-256 has been computed asynchronously.
+     * Only valid for transfers created via {@link #createOffering}.
+     */
+    public void setFileMetadata(FileMetadata metadata) {
+        this.metadata = metadata;
     }
 
     public TransferDirection getDirection() {
@@ -108,24 +107,10 @@ public class Transfer {
         }
         this.state = nextState;
 
-        // Synchronize legacy status
-        switch (nextState) {
-            case OFFERING, WAITING_FOR_ACCEPT -> this.status = TransferStatus.CONNECTING;
-            case ACCEPTED, TRANSFERRING -> this.status = TransferStatus.TRANSFERRING;
-            case VERIFYING -> this.status = TransferStatus.VERIFYING;
-            case COMPLETED -> {
-                this.status = TransferStatus.COMPLETED;
-                this.completedTimeMs = System.currentTimeMillis();
-            }
-            case FAILED, TIMED_OUT -> {
-                this.status = TransferStatus.FAILED;
-                this.completedTimeMs = System.currentTimeMillis();
-            }
-            case REJECTED, CANCELLED -> {
-                this.status = TransferStatus.CANCELLED;
-                this.completedTimeMs = System.currentTimeMillis();
-            }
-            case INTERRUPTED, RESUMABLE, RESUMING -> this.status = TransferStatus.PAUSED;
+        if (nextState == TransferState.COMPLETED || nextState == TransferState.FAILED ||
+            nextState == TransferState.TIMED_OUT || nextState == TransferState.REJECTED ||
+            nextState == TransferState.CANCELLED) {
+            this.completedTimeMs = System.currentTimeMillis();
         }
     }
 
@@ -185,14 +170,6 @@ public class Transfer {
 
     public void setCheckpoint(TransferCheckpoint checkpoint) {
         this.checkpoint = checkpoint;
-    }
-
-    public TransferStatus getStatus() {
-        return status;
-    }
-
-    public void setStatus(TransferStatus status) {
-        this.status = status;
     }
 
     public long getBytesTransferred() {

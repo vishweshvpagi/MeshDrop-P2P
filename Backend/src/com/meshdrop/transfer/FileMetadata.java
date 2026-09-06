@@ -80,12 +80,16 @@ public record FileMetadata(
         }
     }
 
-    /**
-     * Factory method creating a new FileMetadata with a fresh random transfer UUID and current timestamp.
-     */
     public static FileMetadata create(UUID senderId, UUID recipientId, String fileName, long fileSize, String sha256) {
+        return create(senderId, recipientId, fileName, fileSize, sha256, UUID.randomUUID());
+    }
+
+    /**
+     * Factory method creating a new FileMetadata with an explicit transfer UUID and current timestamp.
+     */
+    public static FileMetadata create(UUID senderId, UUID recipientId, String fileName, long fileSize, String sha256, UUID transferId) {
         String safeName = sanitizeFileName(fileName);
-        return new FileMetadata(UUID.randomUUID(), senderId, recipientId, safeName, fileSize, System.currentTimeMillis(), sha256);
+        return new FileMetadata(Objects.requireNonNull(transferId, "transferId must not be null"), senderId, recipientId, safeName, fileSize, System.currentTimeMillis(), sha256);
     }
 
     /**

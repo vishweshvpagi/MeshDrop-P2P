@@ -130,7 +130,7 @@ export class LiveMeshDropService implements MeshDropApi {
   }
 
   async startTransfer(peerId: string, filePath: string): Promise<{ success: boolean; transferId?: string; fileName?: string; fileSize?: number; state?: string; error?: string }> {
-    return apiClient.post('/api/transfers', { peerId, filePath });
+    return apiClient.post('/api/transfers', { peerId, filePath }, 30_000);
   }
 
   async resumeTransfer(transferId: string): Promise<{ success: boolean; transferId?: string; state?: string; error?: string }> {

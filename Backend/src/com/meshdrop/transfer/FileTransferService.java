@@ -168,7 +168,11 @@ public class FileTransferService {
     // ========================================================================
 
     /**
-     * Synchronously initiates an outgoing file transfer, registers it, and returns the Transfer object.
+     * Initiates an outgoing file transfer to a connected peer.
+     *
+     * Returns the Transfer immediately in OFFERING state while SHA-256 hashing and
+     * FILE_OFFER sending proceed in a background virtual thread. This prevents the
+     * HTTP API thread from blocking for several seconds on large files.
      */
     public Transfer startFileTransfer(Peer peer, Path filePath) throws IOException {
         if (!running.get()) {
@@ -187,38 +191,74 @@ public class FileTransferService {
         }
 
         long fileSize = Files.size(filePath);
-        String sha256 = HashUtils.sha256(filePath.toFile());
         String fileName = filePath.getFileName().toString();
 
-        FileMetadata metadata = FileMetadata.create(localIdentity.nodeId(), peer.getNodeId(), fileName, fileSize, sha256);
-        Transfer transfer = new Transfer(metadata, TransferDirection.UPLOAD, filePath);
+        // Create a placeholder Transfer in OFFERING state and register it immediately.
+        // The real FileMetadata (with sha256) is built asynchronously so we do not
+        // block the calling HTTP-API thread while hashing a potentially large file.
+        UUID placeholderId = UUID.randomUUID();
+        Transfer transfer = Transfer.createOffering(placeholderId, fileName, fileSize,
+                peer.getNodeId(), localIdentity.nodeId(), filePath);
         transferManager.registerTransfer(transfer);
 
         CompletableFuture<Transfer> completionFuture = new CompletableFuture<>();
-        pendingOfferFutures.put(metadata.transferId(), completionFuture);
-        transferConnections.put(metadata.transferId(), peer.getConnection());
+        pendingOfferFutures.put(placeholderId, completionFuture);
+        transferConnections.put(placeholderId, peer.getConnection());
 
-        // Send FILE_OFFER packet
-        Packet offerPacket = Packet.createFileOffer(metadata);
-        peer.getConnection().sendPacket(offerPacket);
-        transfer.transitionTo(TransferState.WAITING_FOR_ACCEPT);
-
-        Logger.info("[TRANSFER] Sent FILE_OFFER for " + fileName + " (" + fileSize + " bytes) to " + peer.getDisplayName());
-
-        // Schedule offer timeout (only triggers if peer never accepted/rejected within offerTimeoutMs)
-        Thread.ofVirtual().name("offer-timeout-" + metadata.transferId()).start(() -> {
+        // Hash + offer in a virtual thread so the HTTP caller gets an instant response.
+        Thread.ofVirtual().name("offer-init-" + placeholderId).start(() -> {
             try {
-                Thread.sleep(offerTimeoutMs);
-                if (transfer.getState() == TransferState.WAITING_FOR_ACCEPT) {
-                    CompletableFuture<Transfer> pending = pendingOfferFutures.remove(metadata.transferId());
-                    if (pending != null && !pending.isDone()) {
-                        transfer.transitionTo(TransferState.FAILED);
-                        transfer.setErrorMessage("Offer timed out after " + offerTimeoutMs + "ms");
-                        pending.completeExceptionally(new IOException("Offer timed out waiting for peer acceptance"));
-                        notifyFailed(transfer, "Offer timed out");
-                    }
+                if (!running.get()) {
+                    throw new IOException("FileTransferService shut down before offer could be sent");
                 }
-            } catch (InterruptedException ignored) {}
+                if (!peer.isConnected() || peer.getConnection() == null || !peer.getConnection().isReady()) {
+                    throw new IOException("Peer disconnected before offer could be sent");
+                }
+
+                Logger.info("[TRANSFER] Computing SHA-256 for " + fileName + " (" + fileSize + " bytes)...");
+                String sha256 = HashUtils.sha256(filePath.toFile());
+                Logger.info("[TRANSFER] SHA-256 ready for " + fileName + ": " + sha256.substring(0, 16) + "...");
+
+                FileMetadata metadata = FileMetadata.create(
+                        localIdentity.nodeId(), peer.getNodeId(), fileName, fileSize, sha256, placeholderId);
+                transfer.setFileMetadata(metadata);
+
+                if (!peer.isConnected() || peer.getConnection() == null || !peer.getConnection().isReady()) {
+                    throw new IOException("Peer disconnected after SHA-256 computation");
+                }
+
+                Packet offerPacket = Packet.createFileOffer(metadata);
+                peer.getConnection().sendPacket(offerPacket);
+                transfer.transitionTo(TransferState.WAITING_FOR_ACCEPT);
+
+                Logger.info("[TRANSFER] Sent FILE_OFFER for " + fileName + " (" + fileSize + " bytes) to " + peer.getDisplayName());
+
+                // Schedule offer timeout
+                Thread.ofVirtual().name("offer-timeout-" + placeholderId).start(() -> {
+                    try {
+                        Thread.sleep(offerTimeoutMs);
+                        if (transfer.getState() == TransferState.WAITING_FOR_ACCEPT) {
+                            CompletableFuture<Transfer> pending = pendingOfferFutures.remove(placeholderId);
+                            if (pending != null && !pending.isDone()) {
+                                transfer.transitionTo(TransferState.FAILED);
+                                transfer.setErrorMessage("Offer timed out after " + offerTimeoutMs + "ms");
+                                pending.completeExceptionally(new IOException("Offer timed out waiting for peer acceptance"));
+                                notifyFailed(transfer, "Offer timed out");
+                            }
+                        }
+                    } catch (InterruptedException ignored) {}
+                });
+
+            } catch (Exception e) {
+                Logger.warn("[TRANSFER] Offer init failed for " + fileName + ": " + e.getMessage());
+                pendingOfferFutures.remove(placeholderId);
+                transferConnections.remove(placeholderId);
+                if (!transfer.getState().isTerminal()) {
+                    transfer.setErrorMessage(e.getMessage());
+                    transfer.transitionTo(TransferState.FAILED);
+                }
+                completionFuture.completeExceptionally(e);
+            }
         });
 
         return transfer;
