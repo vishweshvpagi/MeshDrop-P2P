@@ -119,9 +119,13 @@ export async function testConnection(customUrl?: string): Promise<ConnectionTest
     let message = 'Unable to reach backend PC.';
     if (err.name === 'AbortError') {
       message = 'Connection timed out (no response within 6s). Check if backend is running.';
+    } else if (Platform.OS === 'android' && (target.includes('127.0.0.1') || target.includes('localhost'))) {
+      message =
+        "On Android, '127.0.0.1' and 'localhost' point to your phone itself, NOT your PC! If using a physical phone on Wi-Fi, enter your PC's Wi-Fi IP (e.g. http://192.168.x.x:8080). If using Android Emulator, use http://10.0.2.2:8080.";
     } else if (err.message) {
-      if (err.message.includes('Network request failed')) {
-        message = 'Network request failed. Ensure phone and PC are on the same Wi-Fi and the IP is correct.';
+      if (err.message.includes('Network request failed') || err.message.includes('ConnectException')) {
+        message =
+          'Network request failed. Ensure phone and PC are connected to the same Wi-Fi network and the PC IP is correct.';
       } else {
         message = err.message;
       }

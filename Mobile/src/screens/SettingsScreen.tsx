@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
+  Platform,
 } from 'react-native';
 import { useConnection } from '../hooks/useConnection';
 import { Card } from '../components/Card';
@@ -27,6 +28,8 @@ export const SettingsScreen: React.FC = () => {
 
   const [inputUrl, setInputUrl] = useState<string>(baseUrl);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const isAndroidLoopback =
+    Platform.OS === 'android' && (inputUrl.includes('127.0.0.1') || inputUrl.includes('localhost'));
 
   useEffect(() => {
     setInputUrl(baseUrl);
@@ -146,17 +149,35 @@ export const SettingsScreen: React.FC = () => {
           keyboardType="url"
         />
 
+        {isAndroidLoopback && (
+          <View style={styles.warningBox}>
+            <Text style={styles.warningTitle}>⚠️ Android Loopback Warning</Text>
+            <Text style={styles.warningText}>
+              On Android, <Text style={styles.boldText}>127.0.0.1</Text> points to your phone, NOT your PC!
+              {'\n\n'}• <Text style={styles.boldText}>Physical Phone on Wi-Fi:</Text> Enter your PC's Wi-Fi LAN IP (e.g. check the terminal output from <Text style={styles.monoText}>.\start-meshdrop.ps1</Text>).
+              {'\n'}• <Text style={styles.boldText}>Android Emulator:</Text> Tap the <Text style={styles.boldText}>Emulator (10.0.2.2)</Text> preset below.
+            </Text>
+          </View>
+        )}
+
         <Text style={styles.presetLabel}>Quick Presets:</Text>
         <View style={styles.presetRow}>
           <Button
-            title="Android Emulator (10.0.2.2)"
+            title="🤖 Emulator (10.0.2.2)"
             variant="secondary"
             size="sm"
             onPress={() => handleApplyPreset('http://10.0.2.2:8080')}
             style={styles.presetBtn}
           />
           <Button
-            title="Local PC (127.0.0.1)"
+            title="📡 Wi-Fi Template (192.168.x.x)"
+            variant="secondary"
+            size="sm"
+            onPress={() => handleApplyPreset('http://192.168.1.100:8080')}
+            style={styles.presetBtn}
+          />
+          <Button
+            title="💻 Localhost (Web Only)"
             variant="secondary"
             size="sm"
             onPress={() => handleApplyPreset('http://127.0.0.1:8080')}
@@ -307,6 +328,32 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     color: '#0f172a',
     marginBottom: 12,
+  },
+  warningBox: {
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 14,
+  },
+  warningTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#b45309',
+    marginBottom: 4,
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#78350f',
+    lineHeight: 18,
+  },
+  boldText: {
+    fontWeight: '700',
+  },
+  monoText: {
+    fontFamily: 'monospace',
+    fontWeight: '600',
   },
   presetLabel: {
     fontSize: 12,

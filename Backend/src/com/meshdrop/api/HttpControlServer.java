@@ -62,12 +62,12 @@ public class HttpControlServer implements AutoCloseable {
     private HttpServer server;
 
     public HttpControlServer(Node node, int port) {
-        this(node, "127.0.0.1", port);
+        this(node, "0.0.0.0", port);
     }
 
     public HttpControlServer(Node node, String host, int port) {
         this.node = node;
-        this.host = host != null ? host : "127.0.0.1";
+        this.host = host != null ? host : "0.0.0.0";
         this.port = port;
     }
 
@@ -108,7 +108,7 @@ public class HttpControlServer implements AutoCloseable {
 
     private boolean handleCors(HttpExchange exchange) throws IOException {
         String origin = exchange.getRequestHeaders().getFirst("Origin");
-        if (origin != null && (ALLOWED_ORIGINS.contains(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) {
+        if (origin != null && !origin.isBlank()) {
             exchange.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
         } else {
             exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "http://localhost:3000");
