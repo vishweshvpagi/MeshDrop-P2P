@@ -1,0 +1,347 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { useConnection } from '../hooks/useConnection';
+import { Card } from '../components/Card';
+import { Button } from '../components/Button';
+import { Badge } from '../components/Badge';
+import { parseHostPort, normalizeUrl } from '../api/config';
+
+export const SettingsScreen: React.FC = () => {
+  const {
+    baseUrl,
+    isConnected,
+    latencyMs,
+    nodeStatus,
+    error,
+    isChecking,
+    checkConnection,
+    updateBaseUrl,
+  } = useConnection();
+
+  const [inputUrl, setInputUrl] = useState<string>(baseUrl);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  useEffect(() => {
+    setInputUrl(baseUrl);
+  }, [baseUrl]);
+
+  const handleApplyPreset = (preset: string) => {
+    setInputUrl(preset);
+  };
+
+  const handleSaveAndTest = async () => {
+    setIsSaving(true);
+    const cleaned = normalizeUrl(inputUrl);
+    await updateBaseUrl(cleaned);
+    setIsSaving(false);
+    Alert.alert('Settings Saved', `Backend URL set to:\n${cleaned}`);
+  };
+
+  const formatUptime = (ms?: number) => {
+    if (!ms) return '--';
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const h = Math.floor(m / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${h}h ${m % 60}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Backend Connection</Text>
+      <Text style={styles.subtitle}>
+        Configure the PC running the Java MeshDrop transfer engine
+      </Text>
+
+      {/* Connection Status Card */}
+      <Card style={styles.statusCard}>
+        <View style={styles.statusHeader}>
+          <View style={styles.statusTitleGroup}>
+            <Text style={styles.statusTitle}>Backend Status</Text>
+            {latencyMs != null && isConnected && (
+              <Text style={styles.latencyText}>{latencyMs}ms latency</Text>
+            )}
+          </View>
+          <Badge
+            label={isConnected ? 'CONNECTED' : isConnected === false ? 'OFFLINE' : 'CHECKING'}
+            variant={isConnected ? 'success' : isConnected === false ? 'error' : 'warning'}
+            withDot
+          />
+        </View>
+
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠️ {error}</Text>
+          </View>
+        )}
+
+        {isConnected && nodeStatus && (
+          <View style={styles.nodeDetails}>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Node Name:</Text>
+              <Text style={styles.nodeDetailValBold}>{nodeStatus.displayName}</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Node ID:</Text>
+              <Text style={styles.nodeDetailValMono} numberOfLines={1}>
+                {nodeStatus.nodeId}
+              </Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>TCP Engine Port:</Text>
+              <Text style={styles.nodeDetailVal}>{nodeStatus.tcpPort}</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>UDP Discovery:</Text>
+              <Text style={styles.nodeDetailVal}>
+                Port {nodeStatus.discoveryPort} ({nodeStatus.discoveryRunning ? 'Active' : 'Disabled'})
+              </Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Engine Uptime:</Text>
+              <Text style={styles.nodeDetailVal}>{formatUptime(nodeStatus.uptimeMillis)}</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Peers Tracked:</Text>
+              <Text style={styles.nodeDetailVal}>{nodeStatus.peerCount}</Text>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.statusActionRow}>
+          <Button
+            title="Test Connection"
+            variant="outline"
+            size="sm"
+            isLoading={isChecking}
+            onPress={() => checkConnection(inputUrl)}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </Card>
+
+      {/* URL Configuration Card */}
+      <Card style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Backend Base URL</Text>
+        <Text style={styles.inputHint}>
+          Enter the IP address of your PC on the local network (e.g. 192.168.1.50) and port (default 8080).
+        </Text>
+
+        <TextInput
+          style={styles.textInput}
+          value={inputUrl}
+          onChangeText={setInputUrl}
+          placeholder="http://192.168.1.100:8080"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+
+        <Text style={styles.presetLabel}>Quick Presets:</Text>
+        <View style={styles.presetRow}>
+          <Button
+            title="Android Emulator (10.0.2.2)"
+            variant="secondary"
+            size="sm"
+            onPress={() => handleApplyPreset('http://10.0.2.2:8080')}
+            style={styles.presetBtn}
+          />
+          <Button
+            title="Local PC (127.0.0.1)"
+            variant="secondary"
+            size="sm"
+            onPress={() => handleApplyPreset('http://127.0.0.1:8080')}
+            style={styles.presetBtn}
+          />
+        </View>
+
+        <Button
+          title={isSaving ? 'Saving...' : '💾 Save & Connect'}
+          variant="primary"
+          size="md"
+          isLoading={isSaving}
+          onPress={handleSaveAndTest}
+          style={styles.saveBtn}
+        />
+      </Card>
+
+      {/* Architecture Information Card */}
+      <Card style={styles.infoCard}>
+        <Text style={styles.infoTitle}>MeshDrop Mobile Architecture</Text>
+        <Text style={styles.infoBody}>
+          &bull; The Android app functions strictly as a mobile UI and control panel.
+          {'\n'}&bull; The Java backend running on your PC acts as the high-speed P2P transfer engine.
+          {'\n'}&bull; Selected files stream directly from Android storage to the PC via 64 KiB chunks ($O(1)$ RAM).
+          {'\n'}&bull; Large files (e.g. 1.44 GB movies) are transferred reliably without crashing mobile memory.
+        </Text>
+      </Card>
+    </ScrollView>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 16,
+  },
+  statusCard: {
+    marginBottom: 14,
+  },
+  statusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  statusTitleGroup: {
+    flex: 1,
+  },
+  statusTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  latencyText: {
+    fontSize: 12,
+    color: '#16a34a',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 8,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#dc2626',
+  },
+  nodeDetails: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginVertical: 10,
+    gap: 6,
+  },
+  nodeDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  nodeDetailLabel: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  nodeDetailVal: {
+    fontSize: 12,
+    color: '#0f172a',
+  },
+  nodeDetailValBold: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  nodeDetailValMono: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    color: '#475569',
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 10,
+  },
+  statusActionRow: {
+    marginTop: 6,
+  },
+  sectionCard: {
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  inputHint: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 10,
+    lineHeight: 16,
+  },
+  textInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'monospace',
+    color: '#0f172a',
+    marginBottom: 12,
+  },
+  presetLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 6,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  presetBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  saveBtn: {
+    marginTop: 4,
+  },
+  infoCard: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+  },
+  infoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  infoBody: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 18,
+  },
+});
