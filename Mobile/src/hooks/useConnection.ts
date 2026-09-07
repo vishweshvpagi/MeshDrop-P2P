@@ -5,6 +5,7 @@ import {
   setBaseUrl,
   testConnection,
   subscribeBaseUrlChange,
+  resetToDefaultUrl,
 } from '../api/config';
 import { NodeStatus } from '../types/api';
 
@@ -42,6 +43,13 @@ export function useConnection(autoCheckIntervalMs: number = 10000) {
     },
     [check]
   );
+
+  const resetUrl = useCallback(async () => {
+    const updated = await resetToDefaultUrl();
+    setBaseUrlState(updated);
+    await check(updated);
+    return updated;
+  }, [check]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -82,5 +90,6 @@ export function useConnection(autoCheckIntervalMs: number = 10000) {
     isChecking,
     checkConnection: check,
     updateBaseUrl: changeUrl,
+    resetBaseUrl: resetUrl,
   };
 }

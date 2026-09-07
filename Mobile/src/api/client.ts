@@ -19,6 +19,9 @@ export async function request<T = any>(
   const baseUrl = getBaseUrl();
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${baseUrl}${cleanEndpoint}`;
+  const method = (options.method || 'GET').toUpperCase();
+
+  console.log(`[MeshDrop] ${method} ${cleanEndpoint}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -53,6 +56,7 @@ export async function request<T = any>(
         data?.error ||
         data?.message ||
         `Request failed with status ${response.status} (${response.statusText})`;
+      console.log(`[MeshDrop] ${method} ${cleanEndpoint} HTTP ${response.status}: ${errorMsg}`);
       throw new ApiError(errorMsg, response.status, false);
     }
 
@@ -65,18 +69,17 @@ export async function request<T = any>(
     }
 
     if (err.name === 'AbortError') {
-      throw new ApiError(
-        `Request timed out after ${timeoutMs / 1000}s. Check if backend PC is reachable.`,
-        undefined,
-        true
-      );
+      const msg = `Request timed out after ${timeoutMs / 1000}s. Check if backend PC is reachable.`;
+      console.log(`[MeshDrop] ${method} ${cleanEndpoint} timed out`);
+      throw new ApiError(msg, undefined, true);
     }
 
-    let userFriendlyMsg = 'Network request failed. Ensure PC and Phone are on the same Wi-Fi network.';
+    let userFriendlyMsg = 'Network request failed. Ensure PC and Phone are on the same Wi-Fi network and port 8080 is reachable.';
     if (err.message && !err.message.includes('Network request failed')) {
       userFriendlyMsg = err.message;
     }
 
+    console.log(`[MeshDrop] ${method} ${cleanEndpoint} error: ${userFriendlyMsg}`);
     throw new ApiError(userFriendlyMsg, undefined, true);
   }
 }

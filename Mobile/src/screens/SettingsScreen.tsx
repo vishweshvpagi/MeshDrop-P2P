@@ -12,7 +12,7 @@ import { useConnection } from '../hooks/useConnection';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
-import { parseHostPort, normalizeUrl } from '../api/config';
+import { normalizeUrl } from '../api/config';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -24,6 +24,7 @@ export const SettingsScreen: React.FC = () => {
     isChecking,
     checkConnection,
     updateBaseUrl,
+    resetBaseUrl,
   } = useConnection();
 
   const [inputUrl, setInputUrl] = useState<string>(baseUrl);
@@ -40,11 +41,41 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleSaveAndTest = async () => {
-    setIsSaving(true);
+    if (!inputUrl.trim()) {
+      Alert.alert('Invalid URL', 'Please enter a valid backend URL.');
+      return;
+    }
     const cleaned = normalizeUrl(inputUrl);
+    if (Platform.OS === 'android' && (cleaned.includes('127.0.0.1') || cleaned.includes('localhost'))) {
+      Alert.alert(
+        'Android Loopback Warning',
+        '127.0.0.1 and localhost point to your phone itself, NOT your PC!\n\nAre you sure you want to save this?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Save Anyway',
+            onPress: async () => {
+              setIsSaving(true);
+              await updateBaseUrl(cleaned);
+              setIsSaving(false);
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    setIsSaving(true);
     await updateBaseUrl(cleaned);
     setIsSaving(false);
-    Alert.alert('Settings Saved', `Backend URL set to:\n${cleaned}`);
+  };
+
+  const handleResetDefault = async () => {
+    setIsSaving(true);
+    const restored = await resetBaseUrl();
+    setInputUrl(restored);
+    setIsSaving(false);
+    Alert.alert('Reset Complete', `Restored default backend URL:\n${restored}`);
   };
 
   const formatUptime = (ms?: number) => {
@@ -60,83 +91,16 @@ export const SettingsScreen: React.FC = () => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Backend Connection</Text>
+      <Text style={styles.title}>MeshDrop Backend</Text>
       <Text style={styles.subtitle}>
-        Configure the PC running the Java MeshDrop transfer engine
+        Connect your mobile device to the Java transfer engine running on your laptop over Wi-Fi
       </Text>
-
-      {/* Connection Status Card */}
-      <Card style={styles.statusCard}>
-        <View style={styles.statusHeader}>
-          <View style={styles.statusTitleGroup}>
-            <Text style={styles.statusTitle}>Backend Status</Text>
-            {latencyMs != null && isConnected && (
-              <Text style={styles.latencyText}>{latencyMs}ms latency</Text>
-            )}
-          </View>
-          <Badge
-            label={isConnected ? 'CONNECTED' : isConnected === false ? 'OFFLINE' : 'CHECKING'}
-            variant={isConnected ? 'success' : isConnected === false ? 'error' : 'warning'}
-            withDot
-          />
-        </View>
-
-        {error && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>⚠️ {error}</Text>
-          </View>
-        )}
-
-        {isConnected && nodeStatus && (
-          <View style={styles.nodeDetails}>
-            <View style={styles.nodeDetailRow}>
-              <Text style={styles.nodeDetailLabel}>Node Name:</Text>
-              <Text style={styles.nodeDetailValBold}>{nodeStatus.displayName}</Text>
-            </View>
-            <View style={styles.nodeDetailRow}>
-              <Text style={styles.nodeDetailLabel}>Node ID:</Text>
-              <Text style={styles.nodeDetailValMono} numberOfLines={1}>
-                {nodeStatus.nodeId}
-              </Text>
-            </View>
-            <View style={styles.nodeDetailRow}>
-              <Text style={styles.nodeDetailLabel}>TCP Engine Port:</Text>
-              <Text style={styles.nodeDetailVal}>{nodeStatus.tcpPort}</Text>
-            </View>
-            <View style={styles.nodeDetailRow}>
-              <Text style={styles.nodeDetailLabel}>UDP Discovery:</Text>
-              <Text style={styles.nodeDetailVal}>
-                Port {nodeStatus.discoveryPort} ({nodeStatus.discoveryRunning ? 'Active' : 'Disabled'})
-              </Text>
-            </View>
-            <View style={styles.nodeDetailRow}>
-              <Text style={styles.nodeDetailLabel}>Engine Uptime:</Text>
-              <Text style={styles.nodeDetailVal}>{formatUptime(nodeStatus.uptimeMillis)}</Text>
-            </View>
-            <View style={styles.nodeDetailRow}>
-              <Text style={styles.nodeDetailLabel}>Peers Tracked:</Text>
-              <Text style={styles.nodeDetailVal}>{nodeStatus.peerCount}</Text>
-            </View>
-          </View>
-        )}
-
-        <View style={styles.statusActionRow}>
-          <Button
-            title="Test Connection"
-            variant="outline"
-            size="sm"
-            isLoading={isChecking}
-            onPress={() => checkConnection(inputUrl)}
-            style={{ flex: 1 }}
-          />
-        </View>
-      </Card>
 
       {/* URL Configuration Card */}
       <Card style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Backend Base URL</Text>
+        <Text style={styles.sectionTitle}>Backend URL</Text>
         <Text style={styles.inputHint}>
-          Enter the IP address of your PC on the local network (e.g. 192.168.1.50) and port (default 8080).
+          Enter your laptop's Wi-Fi IP address (e.g. http://192.168.29.188:8080 as shown in .\start-meshdrop.ps1).
         </Text>
 
         <TextInput
@@ -153,8 +117,8 @@ export const SettingsScreen: React.FC = () => {
           <View style={styles.warningBox}>
             <Text style={styles.warningTitle}>⚠️ Android Loopback Warning</Text>
             <Text style={styles.warningText}>
-              On Android, <Text style={styles.boldText}>127.0.0.1</Text> points to your phone, NOT your PC!
-              {'\n\n'}• <Text style={styles.boldText}>Physical Phone on Wi-Fi:</Text> Enter your PC's Wi-Fi LAN IP (e.g. check the terminal output from <Text style={styles.monoText}>.\start-meshdrop.ps1</Text>).
+              On Android, <Text style={styles.boldText}>127.0.0.1</Text> and <Text style={styles.boldText}>localhost</Text> point to your phone itself, NOT your PC!
+              {'\n\n'}• <Text style={styles.boldText}>Physical Phone on Wi-Fi:</Text> Enter your PC's Wi-Fi LAN IP (check the terminal output from <Text style={styles.monoText}>.\start-meshdrop.ps1</Text>).
               {'\n'}• <Text style={styles.boldText}>Android Emulator:</Text> Tap the <Text style={styles.boldText}>Emulator (10.0.2.2)</Text> preset below.
             </Text>
           </View>
@@ -176,23 +140,96 @@ export const SettingsScreen: React.FC = () => {
             onPress={() => handleApplyPreset('http://192.168.1.100:8080')}
             style={styles.presetBtn}
           />
+        </View>
+
+        <View style={styles.buttonActionRow}>
           <Button
-            title="💻 Localhost (Web Only)"
-            variant="secondary"
-            size="sm"
-            onPress={() => handleApplyPreset('http://127.0.0.1:8080')}
-            style={styles.presetBtn}
+            title={isSaving || isChecking ? 'Connecting...' : '💾 Save & Test Connection'}
+            variant="primary"
+            size="md"
+            isLoading={isSaving || isChecking}
+            onPress={handleSaveAndTest}
+            style={{ flex: 2 }}
+          />
+          <Button
+            title="🔄 Reset to Default"
+            variant="outline"
+            size="md"
+            onPress={handleResetDefault}
+            style={{ flex: 1.2 }}
+          />
+        </View>
+      </Card>
+
+      {/* Connection Status Card */}
+      <Card style={styles.statusCard}>
+        <View style={styles.statusHeader}>
+          <View style={styles.statusTitleGroup}>
+            <Text style={styles.statusTitle}>Connection Health</Text>
+            {latencyMs != null && isConnected && (
+              <Text style={styles.latencyText}>{latencyMs}ms latency</Text>
+            )}
+          </View>
+          <Badge
+            label={isConnected ? 'CONNECTED' : isConnected === false ? 'UNABLE TO CONNECT' : 'CHECKING...'}
+            variant={isConnected ? 'success' : isConnected === false ? 'error' : 'warning'}
+            withDot
           />
         </View>
 
-        <Button
-          title={isSaving ? 'Saving...' : '💾 Save & Connect'}
-          variant="primary"
-          size="md"
-          isLoading={isSaving}
-          onPress={handleSaveAndTest}
-          style={styles.saveBtn}
-        />
+        {isConnected && nodeStatus ? (
+          <View style={styles.nodeDetails}>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Status:</Text>
+              <Text style={styles.nodeConnectedText}>Connected & Ready</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Node Name:</Text>
+              <Text style={styles.nodeDetailValBold}>{nodeStatus.displayName}</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Node ID:</Text>
+              <Text style={styles.nodeDetailValMono} numberOfLines={1}>
+                {nodeStatus.nodeId}
+              </Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>TCP Engine Port:</Text>
+              <Text style={styles.nodeDetailVal}>{nodeStatus.tcpPort}</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Active Peers:</Text>
+              <Text style={styles.nodeDetailVal}>{nodeStatus.peerCount}</Text>
+            </View>
+            <View style={styles.nodeDetailRow}>
+              <Text style={styles.nodeDetailLabel}>Engine Uptime:</Text>
+              <Text style={styles.nodeDetailVal}>{formatUptime(nodeStatus.uptimeMillis)}</Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.disconnectedBox}>
+            <Text style={styles.disconnectedTitle}>Unable to connect to backend</Text>
+            <Text style={styles.disconnectedBody}>
+              {error || 'The mobile app cannot reach the Java backend server at the specified URL.'}
+            </Text>
+            <View style={styles.troubleSteps}>
+              <Text style={styles.troubleStep}>• Ensure phone & PC are connected to the same Wi-Fi.</Text>
+              <Text style={styles.troubleStep}>• Check start-meshdrop.ps1 terminal for your PC's Wi-Fi IP.</Text>
+              <Text style={styles.troubleStep}>• Make sure port 8080 is not blocked by Windows Firewall.</Text>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.statusActionRow}>
+          <Button
+            title="🔄 Retry Health Check"
+            variant="outline"
+            size="sm"
+            isLoading={isChecking}
+            onPress={() => checkConnection(inputUrl)}
+            style={{ flex: 1 }}
+          />
+        </View>
       </Card>
 
       {/* Architecture Information Card */}
@@ -370,6 +407,48 @@ const styles = StyleSheet.create({
   presetBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
+  },
+  buttonActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  nodeConnectedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#16a34a',
+  },
+  disconnectedBox: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 10,
+  },
+  disconnectedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#dc2626',
+    marginBottom: 4,
+  },
+  disconnectedBody: {
+    fontSize: 12,
+    color: '#991b1b',
+    lineHeight: 16,
+    marginBottom: 8,
+  },
+  troubleSteps: {
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#fee2e2',
+    paddingTop: 6,
+    gap: 3,
+  },
+  troubleStep: {
+    fontSize: 11,
+    color: '#7f1d1d',
+    lineHeight: 15,
   },
   saveBtn: {
     marginTop: 4,

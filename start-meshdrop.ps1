@@ -226,7 +226,36 @@ if (-not $NoMobile) {
 }
 
 # ------------------------------------------------------------------------------
-# 4. Port Conflict Inspection
+# 4. Resolve LAN IP & Network Configuration
+# ------------------------------------------------------------------------------
+$lanIp = try {
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias "Wi-Fi*", "Ethernet*", "vEthernet*" -ErrorAction SilentlyContinue | 
+        Where-Object { $_.IPAddress -notlike "169.254*" -and $_.IPAddress -ne "127.0.0.1" } | 
+        Select-Object -First 1 -ExpandProperty IPAddress
+    if ($ip) { $ip } else { "127.0.0.1" }
+} catch { "127.0.0.1" }
+
+$mobileBackendUrl = "http://${lanIp}:$BackendPort"
+$env:EXPO_PUBLIC_BACKEND_URL = $mobileBackendUrl
+
+# Non-intrusive Windows Firewall verification for TCP port 8080
+$isAdmin = try {
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+} catch { $false }
+
+if ($isAdmin) {
+    try {
+        $existingRule = netsh advfirewall firewall show rule name="MeshDrop HTTP API (Port $BackendPort)" 2>&1
+        if ($existingRule -match "No rules match") {
+            netsh advfirewall firewall add rule name="MeshDrop HTTP API (Port $BackendPort)" dir=in action=allow protocol=TCP localport=$BackendPort profile=private,public | Out-Null
+            Write-Host "  [OK] Added Windows Firewall rule for inbound TCP port $BackendPort" -ForegroundColor Green
+            Log-Launcher "Added Windows Firewall rule for port $BackendPort"
+        }
+    } catch {}
+}
+
+# ------------------------------------------------------------------------------
+# 5. Port Conflict Inspection
 # ------------------------------------------------------------------------------
 function Test-PortOpen([int]$port) {
     $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Listen" }
@@ -494,7 +523,7 @@ if (-not $NoMobile -and $MobileRoot) {
                 -RedirectStandardError $MobileErrLog `
                 -PassThru -NoNewWindow
         } else {
-            $script:MobileProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "title MeshDrop Mobile (Expo) && npx expo start --port $MobilePort") `
+            $script:MobileProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "set EXPO_PUBLIC_BACKEND_URL=$mobileBackendUrl && title MeshDrop Mobile (Expo) && npx expo start --port $MobilePort") `
                 -WorkingDirectory $MobileRoot `
                 -PassThru
         }
@@ -546,26 +575,33 @@ if (-not $NoBrowser) {
     Write-Host "  [NOTE] Browser auto-open skipped (-NoBrowser)." -ForegroundColor DarkGray
 }
 
-$lanIp = try {
-    $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias "Wi-Fi*", "Ethernet*" -ErrorAction SilentlyContinue | 
-        Where-Object { $_.IPAddress -notlike "169.254*" -and $_.IPAddress -ne "127.0.0.1" } | 
-        Select-Object -First 1 -ExpandProperty IPAddress
-    if ($ip) { $ip } else { "127.0.0.1" }
-} catch { "127.0.0.1" }
-
 Write-Host ""
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 Write-Host " MeshDrop is ready." -ForegroundColor Green
 Write-Host " Backend : http://localhost:$BackendPort" -ForegroundColor White
 Write-Host " Frontend: $frontendUrl/?apiPort=$BackendPort" -ForegroundColor White
-if (-not $NoMobile -and $MobileRoot) {
-Write-Host " Mobile  : http://localhost:$MobilePort (or scan QR in Expo window)" -ForegroundColor White
-Write-Host " Phone IP: http://${lanIp}:$BackendPort (for Android device)" -ForegroundColor White
-}
 Write-Host " Mode    : $(if ($Production) { 'Production (Built assets)' } else { 'Development (Vite HMR)' })" -ForegroundColor Gray
 Write-Host " Logs    : $LogsDir" -ForegroundColor DarkGray
 Write-Host "----------------------------------------" -ForegroundColor Cyan
-Write-Host "Press Ctrl+C to stop all MeshDrop services.`n" -ForegroundColor Yellow
+
+if (-not $NoMobile -and $MobileRoot) {
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host " MeshDrop Mobile" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host " Backend URL for Android:" -ForegroundColor Yellow
+    Write-Host "   http://${lanIp}:$BackendPort" -ForegroundColor White
+    Write-Host ""
+    Write-Host " Mobile Metro Bundler:" -ForegroundColor Yellow
+    Write-Host "   http://localhost:$MobilePort (or scan QR in Expo window)" -ForegroundColor White
+    Write-Host ""
+    Write-Host " [NOTE] 127.0.0.1 is NOT the correct address for a physical Android phone." -ForegroundColor Yellow
+    Write-Host "        On Android, 127.0.0.1 refers to the phone itself." -ForegroundColor Yellow
+    Write-Host "        Use http://${lanIp}:$BackendPort in the mobile Settings screen." -ForegroundColor Yellow
+    Write-Host "========================================" -ForegroundColor Cyan
+}
+
+Write-Host "`nPress Ctrl+C to stop all MeshDrop services.`n" -ForegroundColor Yellow
 
 # ------------------------------------------------------------------------------
 # 11. Process Supervision Loop & Clean Exit
