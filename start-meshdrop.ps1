@@ -14,11 +14,14 @@
 param(
     [switch]$Production,
     [switch]$NoBrowser,
+    [switch]$NoMobile,
+    [switch]$NoMobileWindow,
     [string]$NodeName = "",
     [int]$BackendPort = 8080,
     [int]$TcpPort = 5000,
     [int]$UdpPort = 5001,
-    [int]$FrontendPort = 3000
+    [int]$FrontendPort = 3000,
+    [int]$MobilePort = 8081
 )
 
 $ErrorActionPreference = "Continue"
@@ -70,6 +73,23 @@ foreach ($candidate in $PossibleFrontendDirs) {
     }
 }
 
+# Dynamically locate the mobile directory containing package.json
+$MobileRoot = $null
+$PossibleMobileDirs = @(
+    (Join-Path $ScriptDir "mobile"),
+    (Join-Path $ScriptDir "Mobile"),
+    (Join-Path $ScriptDir "..\mobile"),
+    (Join-Path $ScriptDir "..\Mobile"),
+    (Join-Path $BackendRoot "..\mobile"),
+    (Join-Path $BackendRoot "..\Mobile")
+)
+foreach ($candidate in $PossibleMobileDirs) {
+    if ($candidate -and (Test-Path (Join-Path $candidate "package.json"))) {
+        $MobileRoot = (Resolve-Path $candidate).Path
+        break
+    }
+}
+
 $LogsDir = Join-Path $BackendRoot "logs"
 if (-not (Test-Path $LogsDir)) {
     New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
@@ -79,6 +99,8 @@ $BackendLog = Join-Path $LogsDir "backend.log"
 $BackendErrLog = Join-Path $LogsDir "backend.err.log"
 $FrontendLog = Join-Path $LogsDir "frontend.log"
 $FrontendErrLog = Join-Path $LogsDir "frontend.err.log"
+$MobileLog = Join-Path $LogsDir "mobile.log"
+$MobileErrLog = Join-Path $LogsDir "mobile.err.log"
 $LauncherLog = Join-Path $LogsDir "launcher.log"
 
 function Log-Launcher([string]$message) {
@@ -101,7 +123,7 @@ Log-Launcher "Starting MeshDrop launcher (Mode: $(if ($Production) { 'Production
 # ------------------------------------------------------------------------------
 # 3. Check Environment & Prerequisites
 # ------------------------------------------------------------------------------
-Write-Host "[1/4] Checking environment..." -ForegroundColor Yellow
+Write-Host "[1/5] Checking environment..." -ForegroundColor Yellow
 
 # Check Java
 $javaCmd = Get-Command "java" -ErrorAction SilentlyContinue
@@ -184,6 +206,25 @@ if (-not $FrontendRoot) {
 }
 Write-Host "  [OK] Frontend directory ($FrontendRoot)" -ForegroundColor Green
 
+# Verify Mobile Directory
+if (-not $NoMobile) {
+    if ($MobileRoot) {
+        Write-Host "  [OK] Mobile directory ($MobileRoot)" -ForegroundColor Green
+        $mobileModules = Join-Path $MobileRoot "node_modules"
+        if (-not (Test-Path $mobileModules)) {
+            Write-Host "  [NOTE] Installing mobile dependencies..." -ForegroundColor Yellow
+            Push-Location $MobileRoot
+            try {
+                & $npmCmd.Source install
+            } finally {
+                Pop-Location
+            }
+        }
+    } else {
+        Write-Host "  [NOTE] Mobile directory not located. Skipping mobile startup." -ForegroundColor DarkGray
+    }
+}
+
 # ------------------------------------------------------------------------------
 # 4. Port Conflict Inspection
 # ------------------------------------------------------------------------------
@@ -223,6 +264,23 @@ if (Test-PortOpen $FrontendPort) {
     exit 1
 }
 
+$mobileAlreadyRunning = $false
+if (-not $NoMobile -and $MobileRoot -and (Test-PortOpen $MobilePort)) {
+    try {
+        $metroResp = Invoke-WebRequest -Uri "http://127.0.0.1:$MobilePort/status" -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop
+        if ($metroResp.Content -like "*packager-status:running*") {
+            $mobileAlreadyRunning = $true
+            Write-Host "  [NOTE] An existing healthy Expo Metro server is already active on port $MobilePort. Reusing instance." -ForegroundColor Cyan
+            Log-Launcher "Reusing active Expo Metro server on port $MobilePort"
+        }
+    } catch {
+        Write-Host "[ERROR] Port $MobilePort is already in use by another application." -ForegroundColor Red
+        Write-Host "Please free port $MobilePort, specify another port using -MobilePort, or skip with -NoMobile." -ForegroundColor Yellow
+        Log-Launcher "ERROR: Mobile port $MobilePort in use"
+        exit 1
+    }
+}
+
 # ------------------------------------------------------------------------------
 # 5. Build Verification (Backend & Frontend)
 # ------------------------------------------------------------------------------
@@ -260,10 +318,20 @@ if ($Production) {
 # ------------------------------------------------------------------------------
 $script:BackendProcess = $null
 $script:FrontendProcess = $null
+$script:MobileProcess = $null
 
 function Stop-LauncherChildren {
     Write-Host "`n[MESHDROP] Shutting down..." -ForegroundColor Yellow
     Log-Launcher "Initiating graceful shutdown"
+
+    if ($script:MobileProcess -and -not $script:MobileProcess.HasExited) {
+        Write-Host "[MOBILE] Stopping mobile Expo server (PID: $($script:MobileProcess.Id))..." -ForegroundColor Yellow
+        try {
+            taskkill /PID $script:MobileProcess.Id /T /F *>$null
+            $script:MobileProcess.WaitForExit(3000) | Out-Null
+        } catch {}
+        Log-Launcher "Stopped mobile process PID $($script:MobileProcess.Id)"
+    }
 
     if ($script:FrontendProcess -and -not $script:FrontendProcess.HasExited) {
         Write-Host "[FRONTEND] Stopping frontend (PID: $($script:FrontendProcess.Id))..." -ForegroundColor Yellow
@@ -290,7 +358,7 @@ function Stop-LauncherChildren {
 # ------------------------------------------------------------------------------
 # 7. Start Java Backend
 # ------------------------------------------------------------------------------
-Write-Host "`n[2/4] Starting MeshDrop backend..." -ForegroundColor Yellow
+Write-Host "`n[2/5] Starting MeshDrop backend..." -ForegroundColor Yellow
 
 if (-not $backendAlreadyRunning) {
     $effectiveName = if ($NodeName) { $NodeName } else { "$($env:COMPUTERNAME)-$BackendPort" }
@@ -357,7 +425,7 @@ Log-Launcher "Backend readiness verified"
 # ------------------------------------------------------------------------------
 # 8. Start Frontend UI Server
 # ------------------------------------------------------------------------------
-Write-Host "`n[3/4] Starting MeshDrop frontend..." -ForegroundColor Yellow
+Write-Host "`n[3/5] Starting MeshDrop web frontend..." -ForegroundColor Yellow
 
 $frontendArgs = if ($Production) {
     @("run", "preview", "--", "--port", "$FrontendPort", "--host")
@@ -413,9 +481,58 @@ Write-Host "  [OK] Frontend ready ($frontendUrl)" -ForegroundColor Green
 Log-Launcher "Frontend readiness verified"
 
 # ------------------------------------------------------------------------------
-# 9. Open Browser
+# 9. Start Mobile Client (Expo)
 # ------------------------------------------------------------------------------
-Write-Host "`n[4/4] Opening MeshDrop..." -ForegroundColor Yellow
+if (-not $NoMobile -and $MobileRoot) {
+    Write-Host "`n[4/5] Starting MeshDrop mobile client (Expo)..." -ForegroundColor Yellow
+
+    if (-not $mobileAlreadyRunning) {
+        if ($NoMobileWindow) {
+            $script:MobileProcess = Start-Process -FilePath $npmCmd.Source -ArgumentList @("start", "--", "--port", "$MobilePort") `
+                -WorkingDirectory $MobileRoot `
+                -RedirectStandardOutput $MobileLog `
+                -RedirectStandardError $MobileErrLog `
+                -PassThru -NoNewWindow
+        } else {
+            $script:MobileProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "title MeshDrop Mobile (Expo) && npx expo start --port $MobilePort") `
+                -WorkingDirectory $MobileRoot `
+                -PassThru
+        }
+
+        if (-not $script:MobileProcess) {
+            Write-Host "[WARNING] Could not start mobile Expo server." -ForegroundColor Yellow
+        } else {
+            Write-Host "  [OK] Mobile server launched (PID: $($script:MobileProcess.Id))" -ForegroundColor Green
+            Log-Launcher "Mobile process launched (PID: $($script:MobileProcess.Id))"
+        }
+    }
+
+    # Wait for Metro bundler readiness
+    $mobileReady = $false
+    $mobileTimeout = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $mobileTimeout) {
+        if ($script:MobileProcess -and $script:MobileProcess.HasExited) {
+            break
+        }
+        if (Test-PortOpen $MobilePort) {
+            $mobileReady = $true
+            break
+        }
+        Start-Sleep -Milliseconds 300
+    }
+
+    if ($mobileReady) {
+        Write-Host "  [OK] Mobile Metro bundler ready (http://localhost:$MobilePort)" -ForegroundColor Green
+        Log-Launcher "Mobile Metro readiness verified"
+    } else {
+        Write-Host "  [NOTE] Mobile server is starting up in the background." -ForegroundColor DarkGray
+    }
+}
+
+# ------------------------------------------------------------------------------
+# 10. Open Browser
+# ------------------------------------------------------------------------------
+Write-Host "`n[5/5] Opening MeshDrop..." -ForegroundColor Yellow
 if (-not $NoBrowser) {
     try {
         $browserTargetUrl = "$frontendUrl/?apiPort=$BackendPort"
@@ -429,18 +546,29 @@ if (-not $NoBrowser) {
     Write-Host "  [NOTE] Browser auto-open skipped (-NoBrowser)." -ForegroundColor DarkGray
 }
 
+$lanIp = try {
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias "Wi-Fi*", "Ethernet*" -ErrorAction SilentlyContinue | 
+        Where-Object { $_.IPAddress -notlike "169.254*" -and $_.IPAddress -ne "127.0.0.1" } | 
+        Select-Object -First 1 -ExpandProperty IPAddress
+    if ($ip) { $ip } else { "127.0.0.1" }
+} catch { "127.0.0.1" }
+
 Write-Host ""
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 Write-Host " MeshDrop is ready." -ForegroundColor Green
 Write-Host " Backend : http://localhost:$BackendPort" -ForegroundColor White
 Write-Host " Frontend: $frontendUrl/?apiPort=$BackendPort" -ForegroundColor White
+if (-not $NoMobile -and $MobileRoot) {
+Write-Host " Mobile  : http://localhost:$MobilePort (or scan QR in Expo window)" -ForegroundColor White
+Write-Host " Phone IP: http://${lanIp}:$BackendPort (for Android device)" -ForegroundColor White
+}
 Write-Host " Mode    : $(if ($Production) { 'Production (Built assets)' } else { 'Development (Vite HMR)' })" -ForegroundColor Gray
 Write-Host " Logs    : $LogsDir" -ForegroundColor DarkGray
 Write-Host "----------------------------------------" -ForegroundColor Cyan
-Write-Host "Press Ctrl+C to stop MeshDrop.`n" -ForegroundColor Yellow
+Write-Host "Press Ctrl+C to stop all MeshDrop services.`n" -ForegroundColor Yellow
 
 # ------------------------------------------------------------------------------
-# 10. Process Supervision Loop & Clean Exit
+# 11. Process Supervision Loop & Clean Exit
 # ------------------------------------------------------------------------------
 try {
     while ($true) {
@@ -458,6 +586,12 @@ try {
             Write-Host "Check logs at: $FrontendLog" -ForegroundColor Yellow
             Log-Launcher "Frontend died unexpectedly with exit code $($script:FrontendProcess.ExitCode)"
             break
+        }
+
+        if ($script:MobileProcess -and $script:MobileProcess.HasExited) {
+            Write-Host "`n[NOTE] Mobile Expo process exited (PID: $($script:MobileProcess.Id))." -ForegroundColor DarkGray
+            Log-Launcher "Mobile process exited"
+            $script:MobileProcess = $null
         }
     }
 } finally {
