@@ -115,6 +115,7 @@ public class HttpControlServer implements AutoCloseable {
         }
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Peer-Id, X-File-Name, Authorization");
+        exchange.getResponseHeaders().set("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
         exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
 
         if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -538,18 +539,26 @@ public class HttpControlServer implements AutoCloseable {
                     return;
                 }
 
-                // 2. Action endpoints: POST /api/transfers/{id}/{action}
-                if (segments.length == 2 && "POST".equals(method)) {
+                // 2. Action endpoints: POST /api/transfers/{id}/{action} or GET /api/transfers/{id}/download
+                if (segments.length == 2) {
                     String action = segments[1].toLowerCase();
-                    switch (action) {
-                        case "resume" -> handleResumeTransfer(exchange, transfer);
-                        case "cancel" -> handleCancelTransfer(exchange, transfer);
-                        case "retry" -> handleRetryTransfer(exchange, transfer);
-                        case "interrupt" -> handleInterruptTransfer(exchange, transfer);
-                        case "accept" -> handleAcceptTransfer(exchange, transfer);
-                        case "reject" -> handleRejectTransfer(exchange, transfer);
-                        default -> sendJsonResponse(exchange, 404, "{\"success\":false,\"error\":\"Unknown action: " + action + "\"}");
+                    if ("GET".equals(method) && "download".equals(action)) {
+                        handleDownloadTransfer(exchange, transfer);
+                        return;
                     }
+                    if ("POST".equals(method)) {
+                        switch (action) {
+                            case "resume" -> handleResumeTransfer(exchange, transfer);
+                            case "cancel" -> handleCancelTransfer(exchange, transfer);
+                            case "retry" -> handleRetryTransfer(exchange, transfer);
+                            case "interrupt" -> handleInterruptTransfer(exchange, transfer);
+                            case "accept" -> handleAcceptTransfer(exchange, transfer);
+                            case "reject" -> handleRejectTransfer(exchange, transfer);
+                            default -> sendJsonResponse(exchange, 404, "{\"success\":false,\"error\":\"Unknown action: " + action + "\"}");
+                        }
+                        return;
+                    }
+                    sendJsonResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
                     return;
                 }
 
@@ -787,6 +796,43 @@ public class HttpControlServer implements AutoCloseable {
                 }
             } catch (Exception e) {
                 sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
+            }
+        }
+
+        private void handleDownloadTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
+            Path filePath = transfer.getLocalPath();
+            if (filePath == null || !Files.isRegularFile(filePath)) {
+                // Check if file is in downloads directory under the file's name
+                if (transfer.getFileMetadata() != null && node.getConfig() != null && node.getConfig().downloadsDir() != null) {
+                    Path candidate = node.getConfig().downloadsDir().resolve(transfer.getFileMetadata().fileName());
+                    if (Files.isRegularFile(candidate)) {
+                        filePath = candidate;
+                    }
+                }
+            }
+
+            if (filePath == null || !Files.isRegularFile(filePath)) {
+                sendJsonResponse(exchange, 404, "{\"success\":false,\"error\":\"File not found or transfer not completed on disk\"}");
+                return;
+            }
+
+            String fileName = transfer.getFileMetadata() != null ? transfer.getFileMetadata().fileName() : filePath.getFileName().toString();
+            String encodedFileName = java.net.URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
+            long fileSize = Files.size(filePath);
+
+            exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+            exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"" + fileName.replace("\"", "\\\"") + "\"; filename*=UTF-8''" + encodedFileName);
+            exchange.getResponseHeaders().set("Content-Length", String.valueOf(fileSize));
+            exchange.sendResponseHeaders(200, fileSize);
+
+            try (InputStream in = Files.newInputStream(filePath);
+                 OutputStream out = exchange.getResponseBody()) {
+                byte[] buf = new byte[64 * 1024];
+                int read;
+                while ((read = in.read(buf)) != -1) {
+                    out.write(buf, 0, read);
+                }
+                out.flush();
             }
         }
 

@@ -30,6 +30,7 @@ public class HttpControlServerTest {
         testCorsHeaders();
         testUploadTransferEndpoint();
         testAcceptRejectEndpoints();
+        testDownloadTransferEndpoint();
     }
 
     private Node createTestNode(Path tempDir) {
@@ -455,6 +456,61 @@ public class HttpControlServerTest {
             assert conn.getResponseCode() == 200 : "Expected 200 when rejecting WAITING_FOR_ACCEPT transfer";
             assert !rejectFuture.getNow(true) : "rejectFuture must be completed false";
             assert rejTransfer.getState() == TransferState.REJECTED : "Transfer state should be REJECTED";
+        } finally {
+            server.stop();
+            node.stop();
+        }
+    }
+
+    public void testDownloadTransferEndpoint() throws Exception {
+        Path tempDir = java.nio.file.Files.createTempDirectory("meshdrop-api-download-test-");
+        Node node = createTestNode(tempDir);
+        node.start();
+
+        HttpControlServer server = new HttpControlServer(node, 0);
+        server.start();
+        int port = server.getPort();
+
+        try {
+            // 1. Download non-existent transfer -> 404
+            UUID unknownId = UUID.randomUUID();
+            HttpURLConnection conn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + unknownId + "/download").toURL().openConnection();
+            conn.setRequestMethod("GET");
+            assert conn.getResponseCode() == 404 : "Expected 404 for unknown transfer download";
+
+            // 2. Download transfer without file on disk -> 404
+            UUID tid = UUID.randomUUID();
+            UUID sid = UUID.randomUUID();
+            UUID rid = UUID.randomUUID();
+            FileMetadata meta = new FileMetadata(tid, sid, rid, "sample.txt", 11L, System.currentTimeMillis(), "0".repeat(64));
+            Transfer transferNoFile = new Transfer(meta, TransferDirection.DOWNLOAD, null, TransferState.COMPLETED);
+            node.getFileTransferService().getTransferManager().registerTransfer(transferNoFile);
+
+            conn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + tid + "/download").toURL().openConnection();
+            conn.setRequestMethod("GET");
+            assert conn.getResponseCode() == 404 : "Expected 404 when file does not exist on disk";
+
+            // 3. Download completed transfer with valid file -> 200 and exact content
+            Path dummyFile = tempDir.resolve("sample.txt");
+            byte[] expectedData = "Hello MeshDrop World!".getBytes(StandardCharsets.UTF_8);
+            java.nio.file.Files.write(dummyFile, expectedData);
+
+            UUID okTid = UUID.randomUUID();
+            FileMetadata okMeta = new FileMetadata(okTid, sid, rid, "sample.txt", (long) expectedData.length, System.currentTimeMillis(), "0".repeat(64));
+            Transfer okTransfer = new Transfer(okMeta, TransferDirection.DOWNLOAD, dummyFile, TransferState.COMPLETED);
+            node.getFileTransferService().getTransferManager().registerTransfer(okTransfer);
+
+            conn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + okTid + "/download").toURL().openConnection();
+            conn.setRequestMethod("GET");
+            assert conn.getResponseCode() == 200 : "Expected 200 for valid transfer download, got " + conn.getResponseCode();
+            assert String.valueOf(expectedData.length).equals(conn.getHeaderField("Content-Length")) : "Content-Length mismatch";
+            assert conn.getHeaderField("Content-Disposition").contains("sample.txt") : "Content-Disposition should contain filename";
+
+            byte[] downloadedData;
+            try (InputStream in = conn.getInputStream()) {
+                downloadedData = in.readAllBytes();
+            }
+            assert java.util.Arrays.equals(expectedData, downloadedData) : "Downloaded data content mismatch";
         } finally {
             server.stop();
             node.stop();

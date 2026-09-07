@@ -1,9 +1,11 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, Alert } from 'react-native';
+import * as Sharing from 'expo-sharing';
 import { Transfer } from '../types/transfer';
 import { Badge, BadgeVariant } from './Badge';
 import { Button } from './Button';
 import { ProgressBar } from './ProgressBar';
+import { transfersApi } from '../api/transfers';
 import {
   formatBytes,
   formatSpeed,
@@ -29,6 +31,60 @@ export const TransferCard: React.FC<TransferCardProps> = ({
   onResume,
   onRemove,
 }) => {
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isSavedLocally, setIsSavedLocally] = useState<boolean>(false);
+  const [localUri, setLocalUri] = useState<string | null>(null);
+
+  const handleSaveToDevice = async () => {
+    const tid = transfer.transferId || transfer.id;
+    if (!tid) return;
+
+    if (isSavedLocally && localUri) {
+      try {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(localUri, { dialogTitle: `Save or open ${transfer.fileName}` });
+        }
+      } catch (err: any) {
+        Alert.alert('Share Failed', err.message || 'Could not open share dialog');
+      }
+      return;
+    }
+
+    setIsDownloading(true);
+    setDownloadError(null);
+    setDownloadProgress(0);
+
+    try {
+      const uri = await transfersApi.downloadTransferFile(
+        tid,
+        transfer.fileName,
+        (progressFraction) => {
+          setDownloadProgress(Math.round(progressFraction * 100));
+        }
+      );
+      setIsSavedLocally(true);
+      setLocalUri(uri);
+      setIsDownloading(false);
+      setDownloadProgress(null);
+
+      try {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(uri, { dialogTitle: `Save or open ${transfer.fileName}` });
+        } else {
+          Alert.alert('File Saved', `File saved to device storage: ${transfer.fileName}`);
+        }
+      } catch {
+        // Dialog dismissed by user
+      }
+    } catch (err: any) {
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setDownloadError(err.message || 'Failed to download file to device');
+      Alert.alert('Download Error', err.message || 'Failed to download file from PC');
+    }
+  };
   const isIncoming = transfer.direction === 'INCOMING' || (transfer as any).direction === 'DOWNLOAD';
   const isWaitingApproval = transfer.state === 'WAITING_FOR_ACCEPT';
   const isTransferring = transfer.state === 'TRANSFERRING' || transfer.state === 'VERIFYING';
@@ -104,6 +160,15 @@ export const TransferCard: React.FC<TransferCardProps> = ({
         </View>
       )}
 
+      {/* Download to Device Error if present */}
+      {downloadError && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText} numberOfLines={2}>
+            ⚠️ {downloadError}
+          </Text>
+        </View>
+      )}
+
       {/* Action Buttons */}
       <View style={styles.actionsRow}>
         {isWaitingApproval && isIncoming && (
@@ -131,6 +196,26 @@ export const TransferCard: React.FC<TransferCardProps> = ({
 
         {!isWaitingApproval && (
           <View style={styles.standardActionsRow}>
+            {isCompleted && (
+              <Button
+                title={
+                  isDownloading
+                    ? downloadProgress !== null
+                      ? `Saving ${downloadProgress}%...`
+                      : 'Saving...'
+                    : isSavedLocally
+                    ? '✓ Saved (Share / Open)'
+                    : '💾 Save to Device'
+                }
+                variant={isSavedLocally ? 'outline' : 'primary'}
+                size="sm"
+                isLoading={isDownloading}
+                disabled={isDownloading}
+                onPress={handleSaveToDevice}
+                style={[styles.actionBtn, { flex: 1.5 }]}
+              />
+            )}
+
             {transfer.canResume && onResume && (
               <Button
                 title="Resume"

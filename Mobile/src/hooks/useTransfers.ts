@@ -154,6 +154,13 @@ export function useTransfers(pollIntervalMs: number = 1500) {
     [fetchTransfers]
   );
 
+  const downloadFile = useCallback(
+    async (transferId: string, fileName: string, onProgress?: (fraction: number) => void) => {
+      return transfersApi.downloadTransferFile(transferId, fileName, onProgress);
+    },
+    []
+  );
+
   return {
     transfers,
     activeTransfers,
@@ -171,5 +178,6 @@ export function useTransfers(pollIntervalMs: number = 1500) {
     cancelTransfer: cancel,
     resumeTransfer: resume,
     deleteTransfer: remove,
+    downloadFile,
   };
 }

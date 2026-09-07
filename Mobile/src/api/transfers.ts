@@ -122,4 +122,44 @@ export const transfersApi = {
   ): Promise<{ success: boolean; transferId?: string; error?: string }> {
     return apiClient.delete(`/api/transfers/${encodeURIComponent(transferId)}`);
   },
+
+  /**
+   * Returns the direct HTTP download URL for a completed transfer file on the backend.
+   */
+  getDownloadUrl(transferId: string): string {
+    const baseUrl = getBaseUrl();
+    return `${baseUrl}/api/transfers/${encodeURIComponent(transferId)}/download`;
+  },
+
+  /**
+   * Downloads a completed transfer file from the Java backend PC to Android device storage.
+   */
+  async downloadTransferFile(
+    transferId: string,
+    fileName: string,
+    onProgress?: (progressFraction: number) => void
+  ): Promise<string> {
+    const downloadUrl = this.getDownloadUrl(transferId);
+    const safeName = fileName.replace(/[/\\?%*:|"<>]/g, '_');
+    const targetDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+    const targetUri = `${targetDir}${safeName}`;
+
+    const downloadResumable = FileSystem.createDownloadResumable(
+      downloadUrl,
+      targetUri,
+      {},
+      (downloadProgress) => {
+        if (onProgress && downloadProgress.totalBytesExpectedToWrite > 0) {
+          const frac = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
+          onProgress(Math.min(1.0, Math.max(0.0, frac)));
+        }
+      }
+    );
+
+    const result = await downloadResumable.downloadAsync();
+    if (!result || !result.uri) {
+      throw new Error('Failed to download file from backend PC');
+    }
+    return result.uri;
+  },
 };
