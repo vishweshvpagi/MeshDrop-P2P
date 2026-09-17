@@ -31,6 +31,9 @@ public class HttpControlServerTest {
         testUploadTransferEndpoint();
         testAcceptRejectEndpoints();
         testDownloadTransferEndpoint();
+        testMobilePeerInjectionAndDetection();
+        testPhoneToPcUploadAndDirectSave();
+        testPcToPhoneTransferAndStreamDownload();
     }
 
     private Node createTestNode(Path tempDir) {
@@ -511,6 +514,192 @@ public class HttpControlServerTest {
                 downloadedData = in.readAllBytes();
             }
             assert java.util.Arrays.equals(expectedData, downloadedData) : "Downloaded data content mismatch";
+        } finally {
+            server.stop();
+            node.stop();
+        }
+    }
+
+    public void testMobilePeerInjectionAndDetection() throws Exception {
+        Path tempDir = java.nio.file.Files.createTempDirectory("meshdrop-api-mobile-peer-");
+        Node node = createTestNode(tempDir);
+        node.start();
+
+        HttpControlServer server = new HttpControlServer(node, 0);
+        server.start();
+        int port = server.getPort();
+
+        try {
+            // 1. Initially without mobile activity, mobile peer should not appear in GET /api/peers
+            URI uri = URI.create("http://127.0.0.1:" + port + "/api/peers");
+            HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+            conn.setRequestMethod("GET");
+            String body = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert !body.contains("00000000-0000-0000-0000-000000000001") : "Mobile peer should not be visible before mobile client connects: " + body;
+
+            // 2. Mobile client connects with X-MeshDrop-Client: mobile header
+            HttpURLConnection mobileConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/status").toURL().openConnection();
+            mobileConn.setRequestMethod("GET");
+            mobileConn.setRequestProperty("X-MeshDrop-Client", "mobile");
+            assert mobileConn.getResponseCode() == 200 : "Status request with mobile header failed";
+
+            // 3. Now GET /api/peers should include Android Phone (Mobile)
+            conn = (HttpURLConnection) uri.toURL().openConnection();
+            conn.setRequestMethod("GET");
+            body = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert body.contains("00000000-0000-0000-0000-000000000001") : "Mobile peer must be injected into peers list: " + body;
+            assert body.contains("Android Phone (Mobile)") : "Mobile peer name missing: " + body;
+
+            // 4. Single peer lookup GET /api/peers/{MOBILE_PEER_ID} should return 200
+            HttpURLConnection singleConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/peers/00000000-0000-0000-0000-000000000001").toURL().openConnection();
+            singleConn.setRequestMethod("GET");
+            assert singleConn.getResponseCode() == 200 : "Single mobile peer lookup failed";
+            String singleBody = new String(singleConn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert singleBody.contains("Android Phone (Mobile)") : "Single peer body invalid: " + singleBody;
+        } finally {
+            server.stop();
+            node.stop();
+        }
+    }
+
+    public void testPhoneToPcUploadAndDirectSave() throws Exception {
+        Path tempDir = java.nio.file.Files.createTempDirectory("meshdrop-api-mobile-upload-");
+        Node node = createTestNode(tempDir);
+        node.start();
+
+        HttpControlServer server = new HttpControlServer(node, 0);
+        server.start();
+        int port = server.getPort();
+
+        try {
+            // Generate 5 MB of deterministic binary test data
+            int size = 5 * 1024 * 1024;
+            byte[] testPayload = new byte[size];
+            for (int i = 0; i < size; i++) {
+                testPayload[i] = (byte) (i % 251);
+            }
+            String expectedHash = com.meshdrop.security.HashUtils.sha256(testPayload);
+
+            // POST /api/transfers/upload?peerId=local&fileName=mobile_sample.bin
+            URI uploadUri = URI.create("http://127.0.0.1:" + port + "/api/transfers/upload?peerId=local&fileName=mobile_sample.bin");
+            HttpURLConnection conn = (HttpURLConnection) uploadUri.toURL().openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("X-MeshDrop-Client", "mobile");
+            conn.setDoOutput(true);
+            conn.setFixedLengthStreamingMode(size);
+
+            try (java.io.OutputStream out = conn.getOutputStream()) {
+                out.write(testPayload);
+            }
+
+            int code = conn.getResponseCode();
+            assert code == 200 : "Expected 200 for local upload, got " + code;
+            String resBody = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert resBody.contains("\"state\":\"COMPLETED\"") : "Transfer state should be COMPLETED: " + resBody;
+
+            // Verify the file exists in the node's downloads directory
+            Path downloadedFile = node.getConfig().downloadsDir().resolve("mobile_sample.bin");
+            assert java.nio.file.Files.exists(downloadedFile) : "Saved file does not exist on disk: " + downloadedFile;
+            assert java.nio.file.Files.size(downloadedFile) == size : "File size mismatch on disk";
+
+            String savedHash = com.meshdrop.security.HashUtils.sha256(downloadedFile);
+            assert expectedHash.equals(savedHash) : "SHA-256 mismatch! Expected " + expectedHash + " but got " + savedHash;
+
+            // Verify GET /api/transfers contains the completed transfer with isMobileSource: true
+            HttpURLConnection listConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers").toURL().openConnection();
+            listConn.setRequestMethod("GET");
+            String listBody = new String(listConn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert listBody.contains("mobile_sample.bin") : "Transfers list missing mobile_sample.bin: " + listBody;
+            assert listBody.contains("\"isMobileSource\":true") : "isMobileSource flag missing in transfer map: " + listBody;
+        } finally {
+            server.stop();
+            node.stop();
+        }
+    }
+
+    public void testPcToPhoneTransferAndStreamDownload() throws Exception {
+        Path tempDir = java.nio.file.Files.createTempDirectory("meshdrop-api-pc-to-phone-");
+        Node node = createTestNode(tempDir);
+        node.start();
+
+        HttpControlServer server = new HttpControlServer(node, 0);
+        server.start();
+        int port = server.getPort();
+
+        try {
+            // Create a 5 MB file on the PC
+            int size = 5 * 1024 * 1024;
+            byte[] testPayload = new byte[size];
+            for (int i = 0; i < size; i++) {
+                testPayload[i] = (byte) ((i * 17) % 256);
+            }
+            String expectedHash = com.meshdrop.security.HashUtils.sha256(testPayload);
+            Path pcFile = tempDir.resolve("movie_to_send.mp4");
+            java.nio.file.Files.write(pcFile, testPayload);
+
+            // Ensure mobile is active first
+            HttpURLConnection pingConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/status").toURL().openConnection();
+            pingConn.setRequestProperty("X-MeshDrop-Client", "mobile");
+            pingConn.getResponseCode();
+
+            // 1. PC starts transfer targeting mobile: POST /api/transfers with peerId: "mobile"
+            URI startUri = URI.create("http://127.0.0.1:" + port + "/api/transfers");
+            HttpURLConnection startConn = (HttpURLConnection) startUri.toURL().openConnection();
+            startConn.setRequestMethod("POST");
+            startConn.setDoOutput(true);
+            String jsonPayload = String.format("{\"peerId\":\"mobile\",\"filePath\":\"%s\"}", pcFile.toAbsolutePath().toString().replace("\\", "\\\\"));
+            startConn.getOutputStream().write(jsonPayload.getBytes(StandardCharsets.UTF_8));
+            assert startConn.getResponseCode() == 200 : "Failed to initiate transfer to mobile: " + startConn.getResponseCode();
+
+            String startBody = new String(startConn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert startBody.contains("\"isMobileTarget\":true") : "Expected isMobileTarget: true, got: " + startBody;
+            assert startBody.contains("\"state\":\"WAITING_FOR_ACCEPT\"") : "Expected state WAITING_FOR_ACCEPT: " + startBody;
+
+            // Extract transferId
+            int idIdx = startBody.indexOf("\"transferId\":\"");
+            assert idIdx != -1 : "transferId missing in response: " + startBody;
+            int start = idIdx + 14;
+            int end = startBody.indexOf("\"", start);
+            String transferId = startBody.substring(start, end);
+
+            // 2. Mobile accepts transfer: POST /api/transfers/{id}/accept
+            HttpURLConnection acceptConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + transferId + "/accept").toURL().openConnection();
+            acceptConn.setRequestMethod("POST");
+            acceptConn.setRequestProperty("X-MeshDrop-Client", "mobile");
+            assert acceptConn.getResponseCode() == 200 : "Failed to accept transfer: " + acceptConn.getResponseCode();
+
+            // 3. Mobile streams download: GET /api/transfers/{id}/download
+            HttpURLConnection dlConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + transferId + "/download").toURL().openConnection();
+            dlConn.setRequestMethod("GET");
+            dlConn.setRequestProperty("X-MeshDrop-Client", "mobile");
+            assert dlConn.getResponseCode() == 200 : "Failed to start streaming download: " + dlConn.getResponseCode();
+            assert String.valueOf(size).equals(dlConn.getHeaderField("Content-Length")) : "Content-Length mismatch";
+
+            Path mobileReceivedPath = tempDir.resolve("received_on_mobile.mp4");
+            try (InputStream in = dlConn.getInputStream();
+                 java.io.OutputStream out = java.nio.file.Files.newOutputStream(mobileReceivedPath)) {
+                byte[] buf = new byte[64 * 1024];
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    out.write(buf, 0, r);
+                }
+            }
+
+            assert java.nio.file.Files.size(mobileReceivedPath) == size : "Downloaded file size mismatch";
+            String receivedHash = com.meshdrop.security.HashUtils.sha256(mobileReceivedPath);
+            assert expectedHash.equals(receivedHash) : "SHA-256 verification failed! Expected " + expectedHash + " but got " + receivedHash;
+
+            // 4. Mobile signals completion: POST /api/transfers/{id}/complete
+            HttpURLConnection compConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + transferId + "/complete").toURL().openConnection();
+            compConn.setRequestMethod("POST");
+            compConn.setRequestProperty("X-MeshDrop-Client", "mobile");
+            assert compConn.getResponseCode() == 200 : "Failed to complete transfer";
+
+            // 5. Verify final status in GET /api/transfers/{id} is COMPLETED
+            HttpURLConnection getConn = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/api/transfers/" + transferId).toURL().openConnection();
+            getConn.setRequestMethod("GET");
+            String finalBody = new String(getConn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assert finalBody.contains("\"state\":\"COMPLETED\"") : "Final transfer state should be COMPLETED: " + finalBody;
         } finally {
             server.stop();
             node.stop();

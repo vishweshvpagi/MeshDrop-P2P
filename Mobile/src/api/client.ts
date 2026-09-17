@@ -68,18 +68,18 @@ export async function request<T = any>(
       throw err;
     }
 
-    if (err.name === 'AbortError') {
-      const msg = `Request timed out after ${timeoutMs / 1000}s. Check if backend PC is reachable.`;
-      console.log(`[MeshDrop] ${method} ${cleanEndpoint} timed out`);
+    if (err.name === 'AbortError' || (err.message && (err.message.includes('canceled') || err.message.includes('cancelled')))) {
+      const msg = `Request timed out or was cancelled. Check if backend PC is reachable.`;
+      console.log(`[MeshDrop] ${method} ${cleanEndpoint} timed out/cancelled`);
       throw new ApiError(msg, undefined, true);
     }
 
-    let userFriendlyMsg = 'Network request failed. Ensure PC and Phone are on the same Wi-Fi network and port 8080 is reachable.';
-    if (err.message && !err.message.includes('Network request failed')) {
+    let userFriendlyMsg = 'Backend unreachable. Ensure PC and Phone are on the same Wi-Fi network and port 8080 is reachable.';
+    if (err.message && !err.message.includes('Network request failed') && !err.message.includes('ConnectException')) {
       userFriendlyMsg = err.message;
     }
 
-    console.log(`[MeshDrop] ${method} ${cleanEndpoint} error: ${userFriendlyMsg}`);
+    console.log(`[MeshDrop] ${method} ${cleanEndpoint} error: ${userFriendlyMsg} (Raw: ${err.message || err})`);
     throw new ApiError(userFriendlyMsg, undefined, true);
   }
 }

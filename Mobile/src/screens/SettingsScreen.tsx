@@ -7,12 +7,13 @@ import {
   ScrollView,
   Alert,
   Platform,
+  TouchableOpacity,
 } from 'react-native';
 import { useConnection } from '../hooks/useConnection';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
-import { normalizeUrl } from '../api/config';
+import { normalizeUrl, validateBackendUrl } from '../api/config';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -31,6 +32,8 @@ export const SettingsScreen: React.FC = () => {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const isAndroidLoopback =
     Platform.OS === 'android' && (inputUrl.includes('127.0.0.1') || inputUrl.includes('localhost'));
+  const isTypo198 = inputUrl.includes('198.168.');
+  const suggestedTypoFix = inputUrl.replace('198.168.', '192.168.');
 
   useEffect(() => {
     setInputUrl(baseUrl);
@@ -45,8 +48,38 @@ export const SettingsScreen: React.FC = () => {
       Alert.alert('Invalid URL', 'Please enter a valid backend URL.');
       return;
     }
-    const cleaned = normalizeUrl(inputUrl);
-    if (Platform.OS === 'android' && (cleaned.includes('127.0.0.1') || cleaned.includes('localhost'))) {
+
+    const validation = validateBackendUrl(inputUrl);
+
+    if (validation.warning) {
+      Alert.alert(
+        'Possible Typo Detected',
+        `${validation.warning}\n\nDid you mean: ${suggestedTypoFix}?`,
+        [
+          {
+            text: `Use ${suggestedTypoFix}`,
+            onPress: async () => {
+              setInputUrl(suggestedTypoFix);
+              setIsSaving(true);
+              await updateBaseUrl(suggestedTypoFix);
+              setIsSaving(false);
+            },
+          },
+          {
+            text: 'Save Anyway',
+            onPress: async () => {
+              setIsSaving(true);
+              await updateBaseUrl(validation.normalized);
+              setIsSaving(false);
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
+    if (!validation.valid && Platform.OS === 'android' && (inputUrl.includes('127.0.0.1') || inputUrl.includes('localhost'))) {
       Alert.alert(
         'Android Loopback Warning',
         '127.0.0.1 and localhost point to your phone itself, NOT your PC!\n\nAre you sure you want to save this?',
@@ -56,7 +89,7 @@ export const SettingsScreen: React.FC = () => {
             text: 'Save Anyway',
             onPress: async () => {
               setIsSaving(true);
-              await updateBaseUrl(cleaned);
+              await updateBaseUrl(validation.normalized);
               setIsSaving(false);
             },
           },
@@ -66,7 +99,7 @@ export const SettingsScreen: React.FC = () => {
     }
 
     setIsSaving(true);
-    await updateBaseUrl(cleaned);
+    await updateBaseUrl(validation.normalized);
     setIsSaving(false);
   };
 
@@ -112,6 +145,22 @@ export const SettingsScreen: React.FC = () => {
           autoCorrect={false}
           keyboardType="url"
         />
+
+        {isTypo198 && (
+          <View style={styles.typoBox}>
+            <Text style={styles.typoTitle}>⚠️ IP Typo Detected</Text>
+            <Text style={styles.typoText}>
+              <Text style={styles.boldText}>198.168</Text> is usually a typo for your private Wi-Fi address <Text style={styles.boldText}>192.168</Text>. Did you mean <Text style={styles.monoText}>{suggestedTypoFix}</Text>?
+            </Text>
+            <TouchableOpacity
+              style={styles.typoFixBtn}
+              onPress={() => setInputUrl(suggestedTypoFix)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.typoFixBtnText}>Fix to {suggestedTypoFix} →</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {isAndroidLoopback && (
           <View style={styles.warningBox}>
@@ -181,7 +230,7 @@ export const SettingsScreen: React.FC = () => {
           <View style={styles.nodeDetails}>
             <View style={styles.nodeDetailRow}>
               <Text style={styles.nodeDetailLabel}>Status:</Text>
-              <Text style={styles.nodeConnectedText}>Connected & Ready</Text>
+              <Text style={styles.nodeConnectedText}>✓ Connected to MeshDrop</Text>
             </View>
             <View style={styles.nodeDetailRow}>
               <Text style={styles.nodeDetailLabel}>Node Name:</Text>
@@ -208,7 +257,7 @@ export const SettingsScreen: React.FC = () => {
           </View>
         ) : (
           <View style={styles.disconnectedBox}>
-            <Text style={styles.disconnectedTitle}>Unable to connect to backend</Text>
+            <Text style={styles.disconnectedTitle}>✗ Unable to connect to MeshDrop</Text>
             <Text style={styles.disconnectedBody}>
               {error || 'The mobile app cannot reach the Java backend server at the specified URL.'}
             </Text>
@@ -365,6 +414,38 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     color: '#0f172a',
     marginBottom: 12,
+  },
+  typoBox: {
+    backgroundColor: '#fff7ed',
+    borderWidth: 1.5,
+    borderColor: '#ea580c',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 14,
+  },
+  typoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9a3412',
+    marginBottom: 4,
+  },
+  typoText: {
+    fontSize: 12,
+    color: '#7c2d12',
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  typoFixBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ea580c',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  typoFixBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   warningBox: {
     backgroundColor: '#fffbeb',

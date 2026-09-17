@@ -4,6 +4,7 @@ import com.meshdrop.core.Node;
 import com.meshdrop.core.NodeState;
 import com.meshdrop.network.TcpConnection;
 import com.meshdrop.peer.Peer;
+import com.meshdrop.security.HashUtils;
 import com.meshdrop.transfer.FileMetadata;
 import com.meshdrop.transfer.Transfer;
 import com.meshdrop.transfer.TransferDirection;
@@ -12,6 +13,9 @@ import com.meshdrop.util.Logger;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 import java.awt.EventQueue;
 import java.awt.FileDialog;
@@ -55,6 +59,10 @@ public class HttpControlServer implements AutoCloseable {
             "http://localhost:8081",
             "http://127.0.0.1:8081"
     );
+
+    public static final UUID MOBILE_PEER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static volatile long lastMobileActiveTimeMs = 0;
+    private static volatile String lastMobileClientAddress = "";
 
     private final Node node;
     private final int port;
@@ -114,9 +122,24 @@ public class HttpControlServer implements AutoCloseable {
             exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "http://localhost:3000");
         }
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Peer-Id, X-File-Name, Authorization");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Peer-Id, X-File-Name, X-MeshDrop-Client, Authorization");
         exchange.getResponseHeaders().set("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
         exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
+
+        String clientHeader = exchange.getRequestHeaders().getFirst("X-MeshDrop-Client");
+        String userAgent = exchange.getRequestHeaders().getFirst("User-Agent");
+        String remoteHost = exchange.getRemoteAddress() != null && exchange.getRemoteAddress().getAddress() != null
+                ? exchange.getRemoteAddress().getAddress().getHostAddress() : "";
+        boolean isMobile = "mobile".equalsIgnoreCase(clientHeader) ||
+                (userAgent != null && (userAgent.contains("okhttp") || userAgent.contains("Expo") || userAgent.contains("Mobile") || userAgent.contains("CFNetwork"))) ||
+                (!remoteHost.isEmpty() && !remoteHost.equals("127.0.0.1") && !remoteHost.equals("0:0:0:0:0:0:0:1") && !remoteHost.equals("::1"));
+
+        if (isMobile) {
+            lastMobileActiveTimeMs = System.currentTimeMillis();
+            if (!remoteHost.isEmpty() && !remoteHost.equals("127.0.0.1")) {
+                lastMobileClientAddress = remoteHost;
+            }
+        }
 
         if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
             exchange.sendResponseHeaders(204, -1);
@@ -205,6 +228,22 @@ public class HttpControlServer implements AutoCloseable {
                     }
                 }
 
+                if (lastMobileActiveTimeMs > 0) {
+                    Map<String, Object> mobilePeer = new LinkedHashMap<>();
+                    mobilePeer.put("id", MOBILE_PEER_ID.toString());
+                    mobilePeer.put("displayName", "Android Phone (Mobile)");
+                    mobilePeer.put("address", lastMobileClientAddress.isEmpty() ? "Mobile Client" : lastMobileClientAddress);
+                    mobilePeer.put("port", 0);
+                    mobilePeer.put("state", "CONNECTED");
+                    mobilePeer.put("connected", true);
+                    mobilePeer.put("lastSeen", java.time.Instant.ofEpochMilli(lastMobileActiveTimeMs).toString());
+                    mobilePeer.put("connectedAt", java.time.Instant.ofEpochMilli(lastMobileActiveTimeMs).toString());
+                    mobilePeer.put("fingerprint", "MOBILE-HTTP-CLIENT");
+                    mobilePeer.put("trustDecision", "TRUSTED");
+                    mobilePeer.put("isMobile", true);
+                    peerList.add(mobilePeer);
+                }
+
                 sendJsonResponse(exchange, 200, JsonUtils.toJson(peerList));
                 return;
             }
@@ -219,6 +258,23 @@ public class HttpControlServer implements AutoCloseable {
                     peerId = UUID.fromString(segments[0]);
                 } catch (IllegalArgumentException e) {
                     sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Invalid peer UUID: " + segments[0] + "\"}");
+                    return;
+                }
+
+                if (MOBILE_PEER_ID.equals(peerId)) {
+                    Map<String, Object> mobilePeer = new LinkedHashMap<>();
+                    mobilePeer.put("id", MOBILE_PEER_ID.toString());
+                    mobilePeer.put("displayName", "Android Phone (Mobile)");
+                    mobilePeer.put("address", lastMobileClientAddress.isEmpty() ? "Mobile Client" : lastMobileClientAddress);
+                    mobilePeer.put("port", 0);
+                    mobilePeer.put("state", "CONNECTED");
+                    mobilePeer.put("connected", true);
+                    mobilePeer.put("lastSeen", java.time.Instant.ofEpochMilli(lastMobileActiveTimeMs).toString());
+                    mobilePeer.put("connectedAt", java.time.Instant.ofEpochMilli(lastMobileActiveTimeMs).toString());
+                    mobilePeer.put("fingerprint", "MOBILE-HTTP-CLIENT");
+                    mobilePeer.put("trustDecision", "TRUSTED");
+                    mobilePeer.put("isMobile", true);
+                    sendJsonResponse(exchange, 200, JsonUtils.toJson(mobilePeer));
                     return;
                 }
 
@@ -402,13 +458,26 @@ public class HttpControlServer implements AutoCloseable {
         }
         m.put("peerId", peerId != null ? peerId.toString() : "");
 
+        boolean isMobileTarget = meta != null && MOBILE_PEER_ID.equals(meta.recipientId());
+        boolean isMobileSource = meta != null && MOBILE_PEER_ID.equals(meta.senderId());
+
         String peerName = "Unknown";
-        if (peerId != null && node.getPeerManager() != null) {
+        if (isMobileTarget || isMobileSource) {
+            peerName = "Android Phone (Mobile)";
+        } else if (peerId != null && node.getPeerManager() != null) {
             peerName = node.getPeerManager().findPeer(peerId)
                     .map(Peer::getDisplayName)
                     .orElse("Peer-" + peerId.toString().substring(0, 8));
         }
         m.put("peerName", peerName);
+        m.put("isMobileTarget", isMobileTarget);
+        m.put("isMobileSource", isMobileSource);
+        if (isMobileTarget) {
+            m.put("recipient", "MOBILE");
+        }
+        if (isMobileSource) {
+            m.put("sender", "MOBILE");
+        }
 
         TransferState state = t.getState();
         m.put("state", state.name());
@@ -554,6 +623,7 @@ public class HttpControlServer implements AutoCloseable {
                             case "interrupt" -> handleInterruptTransfer(exchange, transfer);
                             case "accept" -> handleAcceptTransfer(exchange, transfer);
                             case "reject" -> handleRejectTransfer(exchange, transfer);
+                            case "complete" -> handleCompleteTransfer(exchange, transfer);
                             default -> sendJsonResponse(exchange, 404, "{\"success\":false,\"error\":\"Unknown action: " + action + "\"}");
                         }
                         return;
@@ -594,12 +664,18 @@ public class HttpControlServer implements AutoCloseable {
                 return;
             }
 
-            UUID peerId;
-            try {
-                peerId = UUID.fromString(peerIdStr);
-            } catch (IllegalArgumentException e) {
-                sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Invalid peer UUID: " + peerIdStr + "\"}");
-                return;
+            UUID peerId = null;
+            boolean isMobile = "mobile".equalsIgnoreCase(peerIdStr);
+            if (!isMobile) {
+                try {
+                    peerId = UUID.fromString(peerIdStr);
+                    if (MOBILE_PEER_ID.equals(peerId)) {
+                        isMobile = true;
+                    }
+                } catch (IllegalArgumentException e) {
+                    sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Invalid peer UUID: " + peerIdStr + "\"}");
+                    return;
+                }
             }
 
             Path path = resolveFilePath(filePathStr);
@@ -612,6 +688,36 @@ public class HttpControlServer implements AutoCloseable {
                         "Please enter the complete disk path (e.g. D:\\" + safeName + " or C:\\Users\\...\\" + safeName + ").");
                 sendJsonResponse(exchange, 400, JsonUtils.toJson(err));
                 return;
+            }
+
+            if (isMobile) {
+                try {
+                    long fileSize = Files.size(path);
+                    UUID transferId = UUID.randomUUID();
+                    String fileName = path.getFileName().toString();
+                    String sha256 = HashUtils.sha256(path);
+                    FileMetadata metadata = new FileMetadata(
+                            transferId,
+                            node.getIdentity().nodeId(),
+                            MOBILE_PEER_ID,
+                            fileName,
+                            fileSize,
+                            System.currentTimeMillis(),
+                            sha256
+                    );
+                    Transfer transfer = new Transfer(metadata, TransferDirection.UPLOAD, path, TransferState.WAITING_FOR_ACCEPT);
+                    node.getFileTransferService().getTransferManager().registerTransfer(transfer);
+                    Map<String, Object> res = transferToMap(transfer);
+                    res.put("success", true);
+                    sendJsonResponse(exchange, 200, JsonUtils.toJson(res));
+                    return;
+                } catch (Exception e) {
+                    Map<String, Object> err = new LinkedHashMap<>();
+                    err.put("success", false);
+                    err.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                    sendJsonResponse(exchange, 500, JsonUtils.toJson(err));
+                    return;
+                }
             }
 
             if (node.getPeerManager() == null) {
@@ -750,12 +856,22 @@ public class HttpControlServer implements AutoCloseable {
         }
 
         private void handleAcceptTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
-            if (transfer.getDirection() != TransferDirection.DOWNLOAD) {
+            boolean isMobileTarget = transfer.getFileMetadata() != null && MOBILE_PEER_ID.equals(transfer.getFileMetadata().recipientId());
+            if (!isMobileTarget && transfer.getDirection() != TransferDirection.DOWNLOAD) {
                 sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Only incoming transfers can be accepted\"}");
                 return;
             }
             if (transfer.getState() != TransferState.WAITING_FOR_ACCEPT) {
                 sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer is in state " + transfer.getState() + ", expected WAITING_FOR_ACCEPT\"}");
+                return;
+            }
+            if (isMobileTarget) {
+                try {
+                    transfer.transitionTo(TransferState.TRANSFERRING);
+                    sendJsonResponse(exchange, 200, JsonUtils.toJson(transferToMap(transfer)));
+                } catch (Exception e) {
+                    sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
+                }
                 return;
             }
             try {
@@ -771,12 +887,22 @@ public class HttpControlServer implements AutoCloseable {
         }
 
         private void handleRejectTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
-            if (transfer.getDirection() != TransferDirection.DOWNLOAD) {
+            boolean isMobileTarget = transfer.getFileMetadata() != null && MOBILE_PEER_ID.equals(transfer.getFileMetadata().recipientId());
+            if (!isMobileTarget && transfer.getDirection() != TransferDirection.DOWNLOAD) {
                 sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Only incoming transfers can be rejected\"}");
                 return;
             }
             if (transfer.getState() != TransferState.WAITING_FOR_ACCEPT) {
                 sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Transfer is in state " + transfer.getState() + ", expected WAITING_FOR_ACCEPT\"}");
+                return;
+            }
+            if (isMobileTarget) {
+                try {
+                    transfer.transitionTo(TransferState.REJECTED);
+                    sendJsonResponse(exchange, 200, "{\"success\":true,\"transferId\":\"" + transfer.getTransferId() + "\"}");
+                } catch (Exception e) {
+                    sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
+                }
                 return;
             }
             String body = "";
@@ -797,6 +923,20 @@ public class HttpControlServer implements AutoCloseable {
             } catch (Exception e) {
                 sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\"}");
             }
+        }
+
+        private void handleCompleteTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
+            if (transfer.getState() != TransferState.COMPLETED) {
+                try {
+                    if (transfer.getState() == TransferState.TRANSFERRING) {
+                        transfer.transitionTo(TransferState.VERIFYING);
+                    }
+                    if (transfer.getState() == TransferState.VERIFYING) {
+                        transfer.transitionTo(TransferState.COMPLETED);
+                    }
+                } catch (Exception ignored) {}
+            }
+            sendJsonResponse(exchange, 200, JsonUtils.toJson(transferToMap(transfer)));
         }
 
         private void handleDownloadTransfer(HttpExchange exchange, Transfer transfer) throws IOException {
@@ -825,14 +965,31 @@ public class HttpControlServer implements AutoCloseable {
             exchange.getResponseHeaders().set("Content-Length", String.valueOf(fileSize));
             exchange.sendResponseHeaders(200, fileSize);
 
+            if (transfer.getState() == TransferState.WAITING_FOR_ACCEPT || transfer.getState() == TransferState.ACCEPTED) {
+                try {
+                    transfer.transitionTo(TransferState.TRANSFERRING);
+                } catch (Exception ignored) {}
+            }
+
             try (InputStream in = Files.newInputStream(filePath);
                  OutputStream out = exchange.getResponseBody()) {
                 byte[] buf = new byte[64 * 1024];
                 int read;
+                long transferred = 0;
                 while ((read = in.read(buf)) != -1) {
                     out.write(buf, 0, read);
+                    transferred += read;
+                    transfer.setBytesTransferred(transferred);
                 }
                 out.flush();
+                try {
+                    if (transfer.getState() == TransferState.TRANSFERRING) {
+                        transfer.transitionTo(TransferState.VERIFYING);
+                    }
+                    if (transfer.getState() == TransferState.VERIFYING) {
+                        transfer.transitionTo(TransferState.COMPLETED);
+                    }
+                } catch (Exception ignored) {}
             }
         }
 
@@ -856,6 +1013,89 @@ public class HttpControlServer implements AutoCloseable {
                 } catch (Exception ignored) {}
             }
 
+            // Sanitize file name to prevent path traversal
+            String safeFileName = (fileName != null && !fileName.isBlank())
+                    ? Path.of(fileName).getFileName().toString()
+                    : "upload_" + System.currentTimeMillis() + ".dat";
+            if (safeFileName.isBlank() || safeFileName.contains("..")) {
+                safeFileName = "upload_" + System.currentTimeMillis() + ".dat";
+            }
+
+            boolean isLocalTarget = "local".equalsIgnoreCase(peerIdStr)
+                    || "self".equalsIgnoreCase(peerIdStr)
+                    || (peerIdStr != null && node.getIdentity() != null && peerIdStr.equalsIgnoreCase(node.getIdentity().nodeId().toString()));
+
+            // 1. Direct Phone -> Local PC upload (saves directly to PC downloads directory)
+            if (isLocalTarget) {
+                Path downloadsDir = node.getConfig() != null && node.getConfig().downloadsDir() != null
+                        ? node.getConfig().downloadsDir()
+                        : Path.of("downloads");
+                Files.createDirectories(downloadsDir);
+
+                Path destFile = downloadsDir.resolve(safeFileName);
+                if (Files.exists(destFile)) {
+                    String base = safeFileName;
+                    String ext = "";
+                    int dotIdx = safeFileName.lastIndexOf('.');
+                    if (dotIdx > 0) {
+                        base = safeFileName.substring(0, dotIdx);
+                        ext = safeFileName.substring(dotIdx);
+                    }
+                    int count = 1;
+                    while (Files.exists(destFile)) {
+                        destFile = downloadsDir.resolve(base + " (" + count + ")" + ext);
+                        count++;
+                    }
+                }
+
+                long totalBytes = 0;
+                MessageDigest md;
+                try {
+                    md = MessageDigest.getInstance("SHA-256");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+
+                try (InputStream in = exchange.getRequestBody();
+                     OutputStream out = Files.newOutputStream(destFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int read;
+                    while ((read = in.read(buf)) != -1) {
+                        out.write(buf, 0, read);
+                        md.update(buf, 0, read);
+                        totalBytes += read;
+                    }
+                    out.flush();
+                } catch (IOException e) {
+                    try { Files.deleteIfExists(destFile); } catch (Exception ignored) {}
+                    sendJsonResponse(exchange, 500, "{\"success\":false,\"error\":\"Failed to save upload: " + e.getMessage() + "\"}");
+                    return;
+                }
+
+                String sha256 = HexFormat.of().formatHex(md.digest());
+
+                UUID transferId = UUID.randomUUID();
+                FileMetadata metadata = new FileMetadata(
+                        transferId,
+                        MOBILE_PEER_ID,
+                        node.getIdentity().nodeId(),
+                        destFile.getFileName().toString(),
+                        totalBytes,
+                        System.currentTimeMillis(),
+                        sha256
+                );
+                Transfer transfer = new Transfer(metadata, TransferDirection.DOWNLOAD, destFile, TransferState.COMPLETED);
+                transfer.setBytesTransferred(totalBytes);
+                if (node.getFileTransferService() != null && node.getFileTransferService().getTransferManager() != null) {
+                    node.getFileTransferService().getTransferManager().registerTransfer(transfer);
+                }
+                Map<String, Object> res = transferToMap(transfer);
+                res.put("success", true);
+                sendJsonResponse(exchange, 200, JsonUtils.toJson(res));
+                return;
+            }
+
+            // 2. Upload and forward to a remote TCP peer
             if (peerIdStr == null || peerIdStr.isBlank()) {
                 sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"peerId parameter is required\"}");
                 return;
@@ -884,14 +1124,6 @@ public class HttpControlServer implements AutoCloseable {
             if (!peer.isConnected()) {
                 sendJsonResponse(exchange, 400, "{\"success\":false,\"error\":\"Peer " + peer.getDisplayName() + " is not connected\"}");
                 return;
-            }
-
-            // Sanitize file name to prevent path traversal
-            String safeFileName = (fileName != null && !fileName.isBlank())
-                    ? Path.of(fileName).getFileName().toString()
-                    : "upload_" + System.currentTimeMillis() + ".dat";
-            if (safeFileName.isBlank() || safeFileName.contains("..")) {
-                safeFileName = "upload_" + System.currentTimeMillis() + ".dat";
             }
 
             // Stage uploaded stream into a dedicated temporary folder on disk with bounded memory (64KB buffer)

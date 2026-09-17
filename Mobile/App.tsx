@@ -15,9 +15,7 @@ import { TransfersScreen } from './src/screens/TransfersScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { IncomingModal } from './src/components/IncomingModal';
 import { Badge } from './src/components/Badge';
-import { usePeers } from './src/hooks/usePeers';
-import { useTransfers } from './src/hooks/useTransfers';
-import { useConnection } from './src/hooks/useConnection';
+import { MeshDropProvider, useMeshDrop } from './src/context/MeshDropContext';
 import { Peer } from './src/types/peer';
 
 type Tab = 'peers' | 'send' | 'transfers' | 'settings';
@@ -27,14 +25,16 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState<Tab>('peers');
   const [selectedPeer, setSelectedPeer] = useState<Peer | null>(null);
 
-  const { isConnected, latencyMs, nodeStatus } = useConnection();
-  const { peers } = usePeers();
   const {
+    isConnected,
+    latencyMs,
+    nodeStatus,
+    peers,
     activeTransfers,
     pendingIncomingTransfers,
     acceptTransfer,
     rejectTransfer,
-  } = useTransfers();
+  } = useMeshDrop();
 
   // If there's an incoming transfer awaiting acceptance, we can surface the modal
   const activeIncomingOffer = pendingIncomingTransfers.length > 0 ? pendingIncomingTransfers[0] : null;
@@ -65,6 +65,22 @@ function MainApp() {
           />
         </TouchableOpacity>
       </View>
+
+      {/* Offline setup banner */}
+      {isConnected === false && activeTab !== 'settings' && (
+        <TouchableOpacity
+          style={styles.offlineBanner}
+          onPress={() => setActiveTab('settings')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.offlineBannerIcon}>⚠️</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.offlineBannerTitle}>Not connected to MeshDrop PC</Text>
+            <Text style={styles.offlineBannerSub}>Tap to configure Wi-Fi Backend URL in Settings</Text>
+          </View>
+          <Text style={styles.offlineBannerAction}>Configure →</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Main Tab Screen Area */}
       <View style={styles.screenContainer}>
@@ -98,7 +114,7 @@ function MainApp() {
           onPress={() => setActiveTab('peers')}
           activeOpacity={0.7}
         >
-          <Text style={styles.tabIcon}>💻</Text>
+          <Text style={styles.tabIcon}>👥</Text>
           <Text style={[styles.tabLabel, activeTab === 'peers' && styles.tabLabelActive]}>
             Peers
           </Text>
@@ -111,7 +127,7 @@ function MainApp() {
         >
           <Text style={styles.tabIcon}>📤</Text>
           <Text style={[styles.tabLabel, activeTab === 'send' && styles.tabLabelActive]}>
-            Send
+            Send File
           </Text>
         </TouchableOpacity>
 
@@ -120,11 +136,11 @@ function MainApp() {
           onPress={() => setActiveTab('transfers')}
           activeOpacity={0.7}
         >
-          <View style={styles.tabIconWrapper}>
-            <Text style={styles.tabIcon}>⇄</Text>
-            {pendingIncomingTransfers.length > 0 ? (
+          <View>
+            <Text style={styles.tabIcon}>⚡</Text>
+            {activeIncomingOffer ? (
               <View style={styles.badgeCountAlert}>
-                <Text style={styles.badgeCountText}>{pendingIncomingTransfers.length}</Text>
+                <Text style={styles.badgeCountText}>!</Text>
               </View>
             ) : activeTransfers.length > 0 ? (
               <View style={styles.badgeCountActive}>
@@ -162,7 +178,9 @@ function MainApp() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <MainApp />
+      <MeshDropProvider>
+        <MainApp />
+      </MeshDropProvider>
     </SafeAreaProvider>
   );
 }
@@ -269,5 +287,33 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 10,
     fontWeight: '700',
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fef3c7',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  offlineBannerIcon: {
+    fontSize: 20,
+  },
+  offlineBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400e',
+  },
+  offlineBannerSub: {
+    fontSize: 11,
+    color: '#b45309',
+    marginTop: 1,
+  },
+  offlineBannerAction: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563eb',
   },
 });

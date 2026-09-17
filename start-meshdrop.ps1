@@ -230,7 +230,7 @@ if (-not $NoMobile) {
 # ------------------------------------------------------------------------------
 $lanIp = try {
     $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias "Wi-Fi*", "Ethernet*", "vEthernet*" -ErrorAction SilentlyContinue | 
-        Where-Object { $_.IPAddress -notlike "169.254*" -and $_.IPAddress -ne "127.0.0.1" } | 
+        Where-Object { -not $_.IPAddress.StartsWith("169.254") -and $_.IPAddress -ne "127.0.0.1" } | 
         Select-Object -First 1 -ExpandProperty IPAddress
     if ($ip) { $ip } else { "127.0.0.1" }
 } catch { "127.0.0.1" }
@@ -576,30 +576,26 @@ if (-not $NoBrowser) {
 }
 
 Write-Host ""
-Write-Host "----------------------------------------" -ForegroundColor Cyan
-Write-Host " MeshDrop is ready." -ForegroundColor Green
-Write-Host " Backend : http://localhost:$BackendPort" -ForegroundColor White
-Write-Host " Frontend: $frontendUrl/?apiPort=$BackendPort" -ForegroundColor White
-Write-Host " Mode    : $(if ($Production) { 'Production (Built assets)' } else { 'Development (Vite HMR)' })" -ForegroundColor Gray
-Write-Host " Logs    : $LogsDir" -ForegroundColor DarkGray
-Write-Host "----------------------------------------" -ForegroundColor Cyan
-
-if (-not $NoMobile -and $MobileRoot) {
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host " MeshDrop Mobile" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host " Backend URL for Android:" -ForegroundColor Yellow
-    Write-Host "   http://${lanIp}:$BackendPort" -ForegroundColor White
-    Write-Host ""
-    Write-Host " Mobile Metro Bundler:" -ForegroundColor Yellow
-    Write-Host "   http://localhost:$MobilePort (or scan QR in Expo window)" -ForegroundColor White
-    Write-Host ""
-    Write-Host " [NOTE] 127.0.0.1 is NOT the correct address for a physical Android phone." -ForegroundColor Yellow
-    Write-Host "        On Android, 127.0.0.1 refers to the phone itself." -ForegroundColor Yellow
-    Write-Host "        Use http://${lanIp}:$BackendPort in the mobile Settings screen." -ForegroundColor Yellow
-    Write-Host "========================================" -ForegroundColor Cyan
-}
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "MeshDrop Ready" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "LAN IP:" -ForegroundColor Yellow
+Write-Host "$lanIp" -ForegroundColor White
+Write-Host ""
+Write-Host "Java HTTP:" -ForegroundColor Yellow
+Write-Host "http://${lanIp}:$BackendPort" -ForegroundColor White
+Write-Host ""
+Write-Host "Expo:" -ForegroundColor Yellow
+Write-Host "exp://${lanIp}:$MobilePort" -ForegroundColor White
+Write-Host ""
+Write-Host "Mobile Backend URL:" -ForegroundColor Yellow
+Write-Host "http://${lanIp}:$BackendPort" -ForegroundColor White
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host " Web Frontend: $frontendUrl/?apiPort=$BackendPort" -ForegroundColor DarkGray
+Write-Host " Backend Local: http://localhost:$BackendPort" -ForegroundColor DarkGray
+Write-Host " Mode         : $(if ($Production) { 'Production (Built assets)' } else { 'Development (Vite HMR)' })" -ForegroundColor DarkGray
+Write-Host " Logs         : $LogsDir" -ForegroundColor DarkGray
+Write-Host "========================================" -ForegroundColor Cyan
 
 Write-Host "`nPress Ctrl+C to stop all MeshDrop services.`n" -ForegroundColor Yellow
 

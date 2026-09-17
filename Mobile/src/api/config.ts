@@ -105,6 +105,38 @@ export async function resetToDefaultUrl(): Promise<string> {
   return defaultUrl;
 }
 
+export interface UrlValidationResult {
+  valid: boolean;
+  normalized: string;
+  warning?: string;
+  error?: string;
+}
+
+export function validateBackendUrl(input: string): UrlValidationResult {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { valid: false, normalized: '', error: 'Backend URL cannot be empty.' };
+  }
+
+  // Detect the common 198.168 typo for 192.168
+  let warning: string | undefined;
+  if (trimmed.includes('198.168.')) {
+    warning = "Typo detected: '198.168' is usually a typo for your private Wi-Fi address '192.168'.";
+  }
+
+  // Detect Android loopback
+  if (Platform.OS === 'android' && (trimmed.includes('127.0.0.1') || trimmed.includes('localhost'))) {
+    return {
+      valid: false,
+      normalized: normalizeUrl(trimmed),
+      error: "On Android, '127.0.0.1' and 'localhost' point to your phone itself, NOT your PC! Enter your laptop's Wi-Fi IP.",
+    };
+  }
+
+  const normalized = normalizeUrl(trimmed);
+  return { valid: true, normalized, warning };
+}
+
 export function normalizeUrl(input: string): string {
   let cleaned = input.trim();
   if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
@@ -113,6 +145,16 @@ export function normalizeUrl(input: string): string {
   while (cleaned.endsWith('/')) {
     cleaned = cleaned.substring(0, cleaned.length - 1);
   }
+
+  // Fix accidental duplicate ports e.g. :8080:8080
+  cleaned = cleaned.replace(/(:8080)+$/, ':8080');
+
+  // If user entered just http://192.168.x.x without port, append :8080
+  const matchWithoutPort = cleaned.match(/^(https?:\/\/[a-zA-Z0-9.-]+)$/);
+  if (matchWithoutPort) {
+    cleaned = `${cleaned}:8080`;
+  }
+
   return cleaned;
 }
 
@@ -134,6 +176,15 @@ export function parseHostPort(url: string): { host: string; port: string } {
  */
 export async function testConnection(customUrl?: string): Promise<ConnectionTestResult> {
   const target = normalizeUrl(customUrl || cachedBaseUrl);
+  const validation = validateBackendUrl(target);
+  if (!validation.valid) {
+    return {
+      connected: false,
+      latencyMs: 0,
+      error: validation.error || 'Backend URL invalid',
+    };
+  }
+
   const startTime = Date.now();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -170,21 +221,21 @@ export async function testConnection(customUrl?: string): Promise<ConnectionTest
   } catch (err: any) {
     clearTimeout(timeoutId);
     const latencyMs = Date.now() - startTime;
-    let message = 'Unable to reach backend PC.';
-    if (err.name === 'AbortError') {
+    let message = 'Backend unreachable';
+    if (err.name === 'AbortError' || (err.message && (err.message.includes('canceled') || err.message.includes('cancelled')))) {
       message = 'Connection timed out (no response within 6s). Check if backend is running on your PC.';
     } else if (Platform.OS === 'android' && (target.includes('127.0.0.1') || target.includes('localhost'))) {
       message =
         "On Android, '127.0.0.1' and 'localhost' point to your phone itself, NOT your PC! Enter your laptop's Wi-Fi IP (e.g. http://192.168.x.x:8080) shown in start-meshdrop.ps1.";
     } else if (err.message) {
-      if (err.message.includes('Network request failed') || err.message.includes('ConnectException')) {
+      if (err.message.includes('Network request failed') || err.message.includes('ConnectException') || err.message.includes('failed to connect')) {
         message =
-          'Network request failed. Ensure your phone and laptop are connected to the same Wi-Fi network and port 8080 is reachable.';
+          'Backend unreachable. Ensure your phone and laptop are connected to the same Wi-Fi network and port 8080 is accessible.';
       } else {
         message = err.message;
       }
     }
-    console.log(`[MeshDrop] Connection failed: ${message}`);
+    console.log(`[MeshDrop] Connection failed: ${message} (Raw: ${err.message || err})`);
     return {
       connected: false,
       latencyMs,

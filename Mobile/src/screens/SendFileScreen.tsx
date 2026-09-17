@@ -48,12 +48,24 @@ export const SendFileScreen: React.FC<SendFileScreenProps> = ({
     setErrorMessage(null);
     try {
       const res = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: false, // Stream directly from storage provider
+        copyToCacheDirectory: false, // Use SAF content:// stream directly; avoiding unscoped Expo Go host cache permission errors
         multiple: false,
       });
 
-      if (!res.canceled && res.assets && res.assets.length > 0) {
+      if (res.canceled) {
+        return;
+      }
+
+      if (res.assets && res.assets.length > 0) {
         const asset = res.assets[0];
+        console.log('Selected file:');
+        console.log({
+          uri: asset.uri,
+          name: asset.name,
+          size: asset.size,
+          mimeType: asset.mimeType,
+        });
+
         setFile({
           name: asset.name,
           size: asset.size || 0,
@@ -67,6 +79,7 @@ export const SendFileScreen: React.FC<SendFileScreenProps> = ({
   };
 
   const handleSend = async () => {
+    if (isSending) return;
     if (!file) {
       setErrorMessage('Please select a file to send.');
       return;
@@ -75,6 +88,11 @@ export const SendFileScreen: React.FC<SendFileScreenProps> = ({
       setErrorMessage('Please select a connected recipient peer.');
       return;
     }
+
+    console.log('[UPLOAD] URI:', file.uri);
+    console.log('[UPLOAD] NAME:', file.name);
+    console.log('[UPLOAD] SIZE:', file.size);
+    console.log('[UPLOAD] MIME:', file.mimeType);
 
     setIsSending(true);
     setErrorMessage(null);
@@ -88,11 +106,11 @@ export const SendFileScreen: React.FC<SendFileScreenProps> = ({
         file.mimeType
       );
 
-      setStatusMessage('Transfer initiated on MeshDrop P2P engine!');
+      setStatusMessage('Transfer completed!');
       setFile(null);
       Alert.alert(
-        'Transfer Started',
-        `"${file.name}" is now being transferred to ${selectedPeer.displayName}.`,
+        'Transfer Complete',
+        `"${file.name}" has been successfully transferred to ${selectedPeer.displayName}.`,
         [
           {
             text: 'View Transfers',
