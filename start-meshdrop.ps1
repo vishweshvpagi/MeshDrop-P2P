@@ -127,7 +127,17 @@ Write-Host "[1/5] Checking environment..." -ForegroundColor Yellow
 
 # Check Java
 $javaCmd = Get-Command "java" -ErrorAction SilentlyContinue
-if (-not $javaCmd) {
+$javaExePath = if (Test-Path "C:\Program Files\Java\jdk-26.0.2\bin\java.exe") {
+    "C:\Program Files\Java\jdk-26.0.2\bin\java.exe"
+} elseif ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME "bin\java.exe"))) {
+    (Join-Path $env:JAVA_HOME "bin\java.exe")
+} elseif ($javaCmd) {
+    $javaCmd.Source
+} else {
+    "java"
+}
+
+if (-not (Test-Path $javaExePath) -and -not $javaCmd) {
     Write-Host "[ERROR] Java was not found on PATH." -ForegroundColor Red
     Write-Host "Please install Java (Java 26 or compatible) or configure JAVA_HOME." -ForegroundColor Yellow
     Log-Launcher "ERROR: Java not found"
@@ -136,7 +146,7 @@ if (-not $javaCmd) {
 
 $javaVerLine = try {
     $tmpFile = Join-Path $LogsDir "java_ver.tmp"
-    $p = Start-Process -FilePath "java" -ArgumentList "-version" -NoNewWindow -PassThru -RedirectStandardError $tmpFile
+    $p = Start-Process -FilePath $javaExePath -ArgumentList "-version" -NoNewWindow -PassThru -RedirectStandardError $tmpFile
     $p.WaitForExit(3000) | Out-Null
     if (Test-Path $tmpFile) {
         $firstLine = (Get-Content $tmpFile -TotalCount 1).Trim()
@@ -145,8 +155,8 @@ $javaVerLine = try {
     } else { "Java detected" }
 } catch { "Java detected" }
 
-Write-Host "  [OK] Java ($javaVerLine)" -ForegroundColor Green
-Log-Launcher "Found Java: $javaVerLine"
+Write-Host "  [OK] Java ($javaVerLine) [$javaExePath]" -ForegroundColor Green
+Log-Launcher "Found Java: $javaVerLine at $javaExePath"
 
 # Check Node.js
 $nodeCmd = Get-Command "node" -ErrorAction SilentlyContinue
@@ -401,7 +411,7 @@ if (-not $backendAlreadyRunning) {
         "--no-cli"
     )
 
-    $script:BackendProcess = Start-Process -FilePath "java" -ArgumentList $javaArgs `
+    $script:BackendProcess = Start-Process -FilePath $javaExePath -ArgumentList $javaArgs `
         -WorkingDirectory $BackendRoot `
         -RedirectStandardOutput $BackendLog `
         -RedirectStandardError $BackendErrLog `
