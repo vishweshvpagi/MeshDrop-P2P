@@ -18,6 +18,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$Version = $Version -replace '^[vV]', ''
+if (-not $Version) { $Version = "1.0.0" }
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
 $ProjectRoot = (Resolve-Path $ScriptDir).Path
@@ -246,26 +249,33 @@ if ($BuildNative -and (Test-Path $jpackageExe)) {
     New-Item -ItemType Directory -Path $jpackageInput -Force | Out-Null
     Copy-Item -Path $outputJar -Destination (Join-Path $jpackageInput "MeshDrop.jar")
 
+    $cleanVersion = $Version -replace '^[vV]', ''
+    if (-not $cleanVersion) { $cleanVersion = "1.0.0" }
+
     try {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
         & $jpackageExe `
             --type app-image `
             --name "MeshDrop" `
-            --app-version "$Version" `
+            --app-version "$cleanVersion" `
             --input "$jpackageInput" `
             --main-jar "MeshDrop.jar" `
             --main-class "com.meshdrop.Main" `
             --dest "$DistDir" `
-            --java-options "--enable-preview" `
             --arguments "--open-browser"
 
-        if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $DistDir "MeshDrop\MeshDrop.exe"))) {
-            $nativeZip = Join-Path $DistDir "MeshDrop-Windows-x64-Setup-v$Version.zip"
+        $ErrorActionPreference = $prevEap
+
+        if (Test-Path (Join-Path $DistDir "MeshDrop\MeshDrop.exe")) {
+            $nativeZip = Join-Path $DistDir "MeshDrop-Windows-x64-Setup-v$cleanVersion.zip"
             if (Test-Path $nativeZip) { Remove-Item -Force $nativeZip }
             Compress-Archive -Path (Join-Path $DistDir "MeshDrop\*") -DestinationPath $nativeZip -Force
             Write-Host "  Native Windows bundle created with embedded JRE: $nativeZip" -ForegroundColor Green
         }
     } catch {
-        Write-Host "  [WARN] Native jpackage packaging skipped or failed: $_" -ForegroundColor Yellow
+        Write-Host "  [WARN] Native jpackage packaging skipped: $_" -ForegroundColor Yellow
     } finally {
         if (Test-Path $jpackageInput) { Remove-Item -Recurse -Force $jpackageInput }
     }
