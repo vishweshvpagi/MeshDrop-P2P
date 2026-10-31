@@ -92,6 +92,7 @@ public class HttpControlServer implements AutoCloseable {
         server.createContext("/api/transfers", new TransfersHandler());
         server.createContext("/api/transfers/cancel", new TransferCancelHandler());
         server.createContext("/api/dialog/open-file", new OpenFileDialogHandler());
+        server.createContext("/", new StaticWebHandler());
 
         server.start();
         Logger.info("[API] MeshDrop Control API listening on http://" + host + ":" + getPort());
@@ -1329,6 +1330,153 @@ public class HttpControlServer implements AutoCloseable {
                 err.put("error", "File selection timed out or was interrupted");
                 sendJsonResponse(exchange, 200, JsonUtils.toJson(err));
             }
+        }
+    }
+
+    /**
+     * Serves production Web UI assets (HTML, JS, CSS, images) directly from disk
+     * (e.g. web/ folder or Frontend/dist) or bundled classpath resources (/web/*).
+     * Automatically falls back to index.html for client-side single page app (SPA) routing.
+     */
+    private static class StaticWebHandler implements HttpHandler {
+        private final List<Path> candidateDirs;
+
+        public StaticWebHandler() {
+            List<Path> dirs = new ArrayList<>();
+            dirs.add(Path.of("web"));
+            dirs.add(Path.of("..", "web"));
+            dirs.add(Path.of("Frontend", "dist"));
+            dirs.add(Path.of("..", "Frontend", "dist"));
+            dirs.add(Path.of("frontend", "dist"));
+            dirs.add(Path.of("..", "frontend", "dist"));
+            this.candidateDirs = dirs;
+        }
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod()) && !"HEAD".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+
+            String path = exchange.getRequestURI().getPath();
+            if (path == null || path.isBlank() || path.equals("/")) {
+                path = "/index.html";
+            }
+
+            // Prevent path traversal
+            if (path.contains("..")) {
+                exchange.sendResponseHeaders(400, -1);
+                return;
+            }
+
+            String normalizedPath = path.startsWith("/") ? path.substring(1) : path;
+
+            byte[] fileBytes = null;
+            String contentType = null;
+
+            // 1. Try file from disk candidates
+            for (Path dir : candidateDirs) {
+                if (Files.isDirectory(dir)) {
+                    Path candidate = dir.resolve(normalizedPath).normalize();
+                    if (candidate.startsWith(dir) && Files.isRegularFile(candidate)) {
+                        try {
+                            fileBytes = Files.readAllBytes(candidate);
+                            contentType = guessMimeType(candidate.getFileName().toString());
+                            break;
+                        } catch (IOException ignored) {}
+                    }
+                }
+            }
+
+            // 2. Try classpath resource (/web/...)
+            if (fileBytes == null) {
+                String resourcePath = "/web/" + normalizedPath;
+                try (InputStream in = HttpControlServer.class.getResourceAsStream(resourcePath)) {
+                    if (in != null) {
+                        fileBytes = in.readAllBytes();
+                        contentType = guessMimeType(normalizedPath);
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // 3. SPA Fallback: for non-asset routes (e.g. /peers, /transfers, /settings), serve index.html
+            if (fileBytes == null && !normalizedPath.contains(".")) {
+                for (Path dir : candidateDirs) {
+                    if (Files.isDirectory(dir)) {
+                        Path indexCandidate = dir.resolve("index.html");
+                        if (Files.isRegularFile(indexCandidate)) {
+                            try {
+                                fileBytes = Files.readAllBytes(indexCandidate);
+                                contentType = "text/html; charset=UTF-8";
+                                break;
+                            } catch (IOException ignored) {}
+                        }
+                    }
+                }
+                if (fileBytes == null) {
+                    try (InputStream in = HttpControlServer.class.getResourceAsStream("/web/index.html")) {
+                        if (in != null) {
+                            fileBytes = in.readAllBytes();
+                            contentType = "text/html; charset=UTF-8";
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            if (fileBytes == null) {
+                if (path.equals("/index.html") || path.equals("/")) {
+                    String infoHtml = """
+                        <!DOCTYPE html>
+                        <html>
+                        <head><meta charset="utf-8"><title>MeshDrop Node</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#f8fafc;padding:50px;text-align:center;}h1{color:#38bdf8;}a{color:#818cf8;}</style></head>
+                        <body>
+                          <h1>MeshDrop Node Active</h1>
+                          <p>MeshDrop backend is running. Control API available at <a href="/api/status">/api/status</a>.</p>
+                        </body>
+                        </html>
+                        """;
+                    fileBytes = infoHtml.getBytes(StandardCharsets.UTF_8);
+                    contentType = "text/html; charset=UTF-8";
+                } else {
+                    exchange.sendResponseHeaders(404, -1);
+                    return;
+                }
+            }
+
+            exchange.getResponseHeaders().set("Content-Type", contentType);
+            if (normalizedPath.startsWith("assets/")) {
+                exchange.getResponseHeaders().set("Cache-Control", "public, max-age=31536000, immutable");
+            } else {
+                exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+            }
+
+            if ("HEAD".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+            } else {
+                exchange.sendResponseHeaders(200, fileBytes.length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(fileBytes);
+                    out.flush();
+                }
+            }
+        }
+
+        private static String guessMimeType(String name) {
+            String lower = name.toLowerCase();
+            if (lower.endsWith(".html")) return "text/html; charset=UTF-8";
+            if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "application/javascript; charset=UTF-8";
+            if (lower.endsWith(".css")) return "text/css; charset=UTF-8";
+            if (lower.endsWith(".json")) return "application/json; charset=UTF-8";
+            if (lower.endsWith(".svg")) return "image/svg+xml";
+            if (lower.endsWith(".png")) return "image/png";
+            if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+            if (lower.endsWith(".gif")) return "image/gif";
+            if (lower.endsWith(".ico")) return "image/x-icon";
+            if (lower.endsWith(".woff2")) return "font/woff2";
+            if (lower.endsWith(".woff")) return "font/woff";
+            if (lower.endsWith(".ttf")) return "font/ttf";
+            return "application/octet-stream";
         }
     }
 }

@@ -38,6 +38,36 @@ MeshDrop is designed around a clean separation of concerns:
 
 ---
 
+## 📦 Downloads & Releases
+
+Pre-packaged releases are available under [**GitHub Releases**](https://github.com/vishweshvpagi/MeshDrop-P2P/releases).
+
+### 📱 Android Phone
+1. Go to [Releases](https://github.com/vishweshvpagi/MeshDrop-P2P/releases) and download **`MeshDrop.apk`**.
+2. Tap the downloaded file on your Android phone to install (allow "Install from Unknown Sources" if prompted).
+3. Connect your phone to your local Wi-Fi and open MeshDrop. No developer mode, Expo Go, or Metro server needed!
+
+### 💻 Laptops (Windows / macOS / Linux)
+1. Go to [Releases](https://github.com/vishweshvpagi/MeshDrop-P2P/releases) and download **`MeshDrop-Laptop-v1.0.0.zip`** (or `MeshDrop.jar`).
+2. Extract the zip folder on your laptop.
+3. **Windows**: Double-click **`MeshDrop.bat`**.
+   **macOS / Linux**: Run `chmod +x MeshDrop.sh && ./MeshDrop.sh` or `java -jar MeshDrop.jar --open-browser`.
+4. MeshDrop automatically opens in your browser at `http://localhost:8080` with the complete Web UI and backend active. **No Node.js or Vite installation required!**
+
+### 🛠️ Building Releases Locally
+- **Build Laptop Release**:
+  ```powershell
+  .\package-laptop.ps1
+  ```
+  Generates `dist/MeshDrop.jar` and `dist/MeshDrop-Laptop-v1.0.0.zip`.
+- **Build Android APK**:
+  ```powershell
+  .\package-android.ps1
+  ```
+  Guides cloud builds via GitHub Actions or Expo EAS Build.
+
+---
+
 ## ⚡ Quickstart: One-Command Startup
 
 Launch the complete application (Java backend + React frontend) with a single command from the project root:

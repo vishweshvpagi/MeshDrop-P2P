@@ -37,6 +37,7 @@ public class Main {
         boolean discoveryEnabled = true;
         boolean enableCli = true;
         boolean autoAcceptOffers = false;
+        boolean openBrowser = false;
         String connectHost = null;
         int connectPort = 0;
 
@@ -59,6 +60,8 @@ public class Main {
                 enableCli = false;
             } else if ("--auto-accept".equalsIgnoreCase(args[i])) {
                 autoAcceptOffers = true;
+            } else if ("--open-browser".equalsIgnoreCase(args[i]) || "--gui".equalsIgnoreCase(args[i])) {
+                openBrowser = true;
             } else if ("connect".equalsIgnoreCase(args[i]) && i + 2 < args.length) {
                 connectHost = args[++i];
                 connectPort = Integer.parseInt(args[++i]);
@@ -116,6 +119,15 @@ public class Main {
             if (finalApiServer != null) {
                 try {
                     finalApiServer.start();
+                    if (openBrowser) {
+                        try {
+                            if (java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                                java.awt.Desktop.getDesktop().browse(java.net.URI.create("http://localhost:" + apiPort + "/"));
+                            }
+                        } catch (Throwable t) {
+                            Logger.info("[GUI] Open http://localhost:" + apiPort + "/ in your browser to access the control panel.");
+                        }
+                    }
                 } catch (IOException e) {
                     Logger.warn("[API] Could not start HTTP control API on port " + apiPort + ": " + e.getMessage());
                 }

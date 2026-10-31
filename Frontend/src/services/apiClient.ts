@@ -124,7 +124,11 @@ export class ApiClient {
               const offset = portNum - 3000;
               const host = window.location.hostname || 'localhost';
               resolvedUrl = `http://${host}:${8080 + offset}`;
+            } else if (window.location.origin) {
+              resolvedUrl = window.location.origin;
             }
+          } else if (window.location.origin) {
+            resolvedUrl = window.location.origin;
           }
         }
       } catch {
